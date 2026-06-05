@@ -934,7 +934,9 @@
         }
 
         function openDemo(file) {
-            window.open(file, '_blank');
+            // 对中文文件名进行 URL 编码
+            const encodedFile = encodeURIComponent(file);
+            window.open(encodedFile, '_blank');
         }
 
         function filterCategory(category) {
