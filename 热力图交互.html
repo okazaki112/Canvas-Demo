@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>热力图交互</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            overflow: hidden;
+            background: #0a0a0a;
+            font-family: 'Microsoft YaHei', sans-serif;
+        }
+        canvas { display: block; }
+        .controls {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            z-index: 10;
+            display: flex;
+            gap: 10px;
+        }
+        .controls button {
+            padding: 8px 16px;
+            border: 1px solid #333;
+            background: rgba(0,0,0,0.8);
+            color: #fff;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .info {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            color: rgba(255,255,255,0.5);
+            font-size: 14px;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="controls">
+        <button onclick="clearHeatmap()">清空热力</button>
+        <button onclick="toggleAuto()">自动演示</button>
+    </div>
+    <div class="info">鼠标滑动生成热度光斑，叠加渐变热力扩散</div>
+    <canvas id="canvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        let width, height;
+        let heatPoints = [];
+        let mouse = { x: 0, y: 0, down: false };
+        let autoMode = false;
+        let autoTime = 0;
+        
+        function resize() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+        }
+        
+        class HeatPoint {
+            constructor(x, y, intensity) {
+                this.x = x;
+                this.y = y;
+                this.intensity = intensity;
+                this.radius = 0;
+                this.maxRadius = 80 + Math.random() * 60;
+                this.growth = 2 + Math.random() * 2;
+                this.life = 1;
+                this.decay = 0.005 + Math.random() * 0.005;
+            }
+            
+            update() {
+                if (this.radius < this.maxRadius) {
+                    this.radius += this.growth;
+                    this.growth *= 0.98;
+                }
+                this.life -= this.decay;
+            }
+            
+            draw() {
+                const alpha = this.life * this.intensity;
+                const gradient = ctx.createRadialGradient(
+                    this.x, this.y, 0,
+                    this.x, this.y, this.radius
+                );
+                
+                const heatValue = this.life * this.intensity;
+                let r, g, b;
+                if (heatValue > 0.7) {
+                    r = 255;
+                    g = Math.floor((1 - heatValue) / 0.3 * 255);
+                    b = 0;
+                } else if (heatValue > 0.4) {
+                    r = 255;
+                    g = 255;
+                    b = Math.floor((0.7 - heatValue) / 0.3 * 255);
+                } else {
+                    r = Math.floor(heatValue / 0.4 * 255);
+                    g = 255;
+                    b = 255;
+                }
+                
+                gradient.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${alpha * 0.8})`);
+                gradient.addColorStop(0.5, `rgba(${r}, ${g}, ${b}, ${alpha * 0.3})`);
+                gradient.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
+                
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = gradient;
+                ctx.fill();
+            }
+            
+            isDead() {
+                return this.life <= 0;
+            }
+        }
+        
+        function addHeatPoint(x, y, intensity) {
+            heatPoints.push(new HeatPoint(x, y, intensity));
+            if (heatPoints.length > 200) {
+                heatPoints.shift();
+            }
+        }
+        
+        function animate() {
+            ctx.fillStyle = 'rgba(10, 10, 10, 0.1)';
+            ctx.fillRect(0, 0, width, height);
+            
+            if (mouse.down) {
+                addHeatPoint(mouse.x, mouse.y, 0.8 + Math.random() * 0.2);
+            }
+            
+            if (autoMode) {
+                autoTime += 0.02;
+                const x = width / 2 + Math.cos(autoTime) * width * 0.3;
+                const y = height / 2 + Math.sin(autoTime * 1.5) * height * 0.3;
+                addHeatPoint(x, y, 0.6);
+            }
+            
+            for (let point of heatPoints) {
+                point.update();
+                point.draw();
+            }
+            
+            heatPoints = heatPoints.filter(p => !p.isDead());
+            
+            requestAnimationFrame(animate);
+        }
+        
+        canvas.addEventListener('mousedown', e => {
+            mouse.down = true;
+            mouse.x = e.clientX;
+            mouse.y = e.clientY;
+        });
+        
+        canvas.addEventListener('mousemove', e => {
+            mouse.x = e.clientX;
+            mouse.y = e.clientY;
+            if (mouse.down) {
+                addHeatPoint(e.clientX, e.clientY, 0.6 + Math.random() * 0.4);
+            }
+        });
+        
+        canvas.addEventListener('mouseup', () => mouse.down = false);
+        canvas.addEventListener('mouseleave', () => mouse.down = false);
+        
+        canvas.addEventListener('touchstart', e => {
+            e.preventDefault();
+            mouse.down = true;
+            mouse.x = e.touches[0].clientX;
+            mouse.y = e.touches[0].clientY;
+        });
+        
+        canvas.addEventListener('touchmove', e => {
+            e.preventDefault();
+            mouse.x = e.touches[0].clientX;
+            mouse.y = e.touches[0].clientY;
+            addHeatPoint(mouse.x, mouse.y, 0.6);
+        });
+        
+        canvas.addEventListener('touchend', () => mouse.down = false);
+        
+        function clearHeatmap() {
+            heatPoints = [];
+            ctx.fillStyle = '#0a0a0a';
+            ctx.fillRect(0, 0, width, height);
+        }
+        
+        function toggleAuto() {
+            autoMode = !autoMode;
+        }
+        
+        window.addEventListener('resize', resize);
+        resize();
+        animate();
+    </script>
+</body>
+</html>

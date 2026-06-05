@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>大屏数据动态拓扑图</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            overflow: hidden;
+            background: #0a0a1a;
+            font-family: 'Microsoft YaHei', sans-serif;
+        }
+        canvas { display: block; }
+        .info {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            color: rgba(255,255,255,0.7);
+            font-size: 14px;
+            pointer-events: none;
+            z-index: 10;
+        }
+        .info h1 { font-size: 18px; margin-bottom: 8px; color: #fff; }
+        .controls {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 10;
+            display: flex;
+            gap: 10px;
+        }
+        .controls button {
+            padding: 8px 16px;
+            border: 1px solid #333;
+            background: rgba(0,0,0,0.8);
+            color: #fff;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="info">
+        <h1>大屏数据动态拓扑图</h1>
+        <p>节点连线拖拽、连线流动光效</p>
+    </div>
+    <div class="controls">
+        <button onclick="addNode()">添加节点</button>
+        <button onclick="resetGraph()">重置</button>
+    </div>
+    <canvas id="canvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        let width, height;
+        let nodes = [];
+        let links = [];
+        let particles = [];
+        let mouse = { x: 0, y: 0, down: false, dragNode: null };
+        let selectedNode = null;
+        
+        function resize() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+        }
+        
+        class Node {
+            constructor(x, y, label) {
+                this.x = x;
+                this.y = y;
+                this.vx = 0;
+                this.vy = 0;
+                this.radius = 25;
+                this.label = label;
+                this.color = `hsl(${Math.random() * 360}, 70%, 60%)`;
+                this.pulse = 0;
+            }
+            
+            update() {
+                this.vx *= 0.95;
+                this.vy *= 0.95;
+                this.x += this.vx;
+                this.y += this.vy;
+                
+                if (this.x < this.radius) { this.x = this.radius; this.vx *= -0.5; }
+                if (this.x > width - this.radius) { this.x = width - this.radius; this.vx *= -0.5; }
+                if (this.y < this.radius) { this.y = this.radius; this.vy *= -0.5; }
+                if (this.y > height - this.radius) { this.y = height - this.radius; this.vy *= -0.5; }
+                
+                this.pulse += 0.05;
+            }
+            
+            draw() {
+                const pulseSize = Math.sin(this.pulse) * 3;
+                
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius + pulseSize + 5, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(100, 200, 255, 0.1)`;
+                ctx.fill();
+                
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = this.color;
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                
+                ctx.fillStyle = '#fff';
+                ctx.font = '12px Microsoft YaHei';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(this.label, this.x, this.y);
+            }
+        }
+        
+        class Link {
+            constructor(node1, node2) {
+                this.node1 = node1;
+                this.node2 = node2;
+                this.particles = [];
+                this.flowSpeed = 2;
+            }
+            
+            update() {
+                const dx = this.node2.x - this.node1.x;
+                const dy = this.node2.y - this.node1.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                
+                if (Math.random() < 0.05) {
+                    this.particles.push({
+                        t: 0,
+                        speed: this.flowSpeed / dist
+                    });
+                }
+                
+                for (let p of this.particles) {
+                    p.t += p.speed;
+                }
+                this.particles = this.particles.filter(p => p.t < 1);
+            }
+            
+            draw() {
+                ctx.beginPath();
+                ctx.moveTo(this.node1.x, this.node1.y);
+                ctx.lineTo(this.node2.x, this.node2.y);
+                ctx.strokeStyle = 'rgba(100, 200, 255, 0.3)';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+                
+                for (let p of this.particles) {
+                    const x = this.node1.x + (this.node2.x - this.node1.x) * p.t;
+                    const y = this.node1.y + (this.node2.y - this.node1.y) * p.t;
+                    
+                    ctx.beginPath();
+                    ctx.arc(x, y, 3, 0, Math.PI * 2);
+                    ctx.fillStyle = 'rgba(100, 255, 200, 0.8)';
+                    ctx.fill();
+                }
+            }
+        }
+        
+        function initGraph() {
+            nodes = [];
+            links = [];
+            
+            const labels = ['服务器A', '服务器B', '数据库', '缓存', '网关', '负载均衡', '监控', '日志'];
+            for (let i = 0; i < labels.length; i++) {
+                nodes.push(new Node(
+                    Math.random() * (width - 100) + 50,
+                    Math.random() * (height - 100) + 50,
+                    labels[i]
+                ));
+            }
+            
+            for (let i = 0; i < nodes.length; i++) {
+                for (let j = i + 1; j < nodes.length; j++) {
+                    if (Math.random() < 0.4) {
+                        links.push(new Link(nodes[i], nodes[j]));
+                    }
+                }
+            }
+        }
+        
+        function applyForces() {
+            for (let i = 0; i < nodes.length; i++) {
+                for (let j = i + 1; j < nodes.length; j++) {
+                    const dx = nodes[j].x - nodes[i].x;
+                    const dy = nodes[j].y - nodes[i].y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    
+                    if (dist < 200 && dist > 0) {
+                        const force = (200 - dist) / 200 * 0.5;
+                        const fx = (dx / dist) * force;
+                        const fy = (dy / dist) * force;
+                        
+                        nodes[i].vx -= fx;
+                        nodes[i].vy -= fy;
+                        nodes[j].vx += fx;
+                        nodes[j].vy += fy;
+                    }
+                }
+            }
+            
+            for (let link of links) {
+                const dx = link.node2.x - link.node1.x;
+                const dy = link.node2.y - link.node1.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                
+                if (dist > 0) {
+                    const force = (dist - 150) / 150 * 0.02;
+                    const fx = (dx / dist) * force;
+                    const fy = (dy / dist) * force;
+                    
+                    link.node1.vx += fx;
+                    link.node1.vy += fy;
+                    link.node2.vx -= fx;
+                    link.node2.vy -= fy;
+                }
+            }
+        }
+        
+        function animate() {
+            ctx.fillStyle = 'rgba(10, 10, 26, 0.3)';
+            ctx.fillRect(0, 0, width, height);
+            
+            applyForces();
+            
+            for (let link of links) {
+                link.update();
+                link.draw();
+            }
+            
+            for (let node of nodes) {
+                node.update();
+                node.draw();
+            }
+            
+            if (mouse.down && mouse.dragNode) {
+                mouse.dragNode.x = mouse.x;
+                mouse.dragNode.y = mouse.y;
+                mouse.dragNode.vx = 0;
+                mouse.dragNode.vy = 0;
+            }
+            
+            requestAnimationFrame(animate);
+        }
+        
+        function getNodeAt(x, y) {
+            for (let node of nodes) {
+                const dist = Math.sqrt((node.x - x) ** 2 + (node.y - y) ** 2);
+                if (dist < node.radius) return node;
+            }
+            return null;
+        }
+        
+        canvas.addEventListener('mousedown', e => {
+            mouse.down = true;
+            mouse.x = e.clientX;
+            mouse.y = e.clientY;
+            mouse.dragNode = getNodeAt(e.clientX, e.clientY);
+            
+            if (mouse.dragNode) {
+                if (selectedNode && selectedNode !== mouse.dragNode) {
+                    const exists = links.some(l => 
+                        (l.node1 === selectedNode && l.node2 === mouse.dragNode) ||
+                        (l.node1 === mouse.dragNode && l.node2 === selectedNode)
+                    );
+                    if (!exists) {
+                        links.push(new Link(selectedNode, mouse.dragNode));
+                    }
+                    selectedNode = null;
+                } else {
+                    selectedNode = mouse.dragNode;
+                }
+            } else {
+                selectedNode = null;
+            }
+        });
+        
+        canvas.addEventListener('mousemove', e => {
+            mouse.x = e.clientX;
+            mouse.y = e.clientY;
+        });
+        
+        canvas.addEventListener('mouseup', () => {
+            mouse.down = false;
+            mouse.dragNode = null;
+        });
+        
+        canvas.addEventListener('mouseleave', () => {
+            mouse.down = false;
+            mouse.dragNode = null;
+        });
+        
+        function addNode() {
+            const labels = ['新节点', '服务', 'API', '前端', '后端', '中间件'];
+            const label = labels[Math.floor(Math.random() * labels.length)];
+            nodes.push(new Node(mouse.x || width / 2, mouse.y || height / 2, label));
+        }
+        
+        function resetGraph() {
+            initGraph();
+        }
+        
+        window.addEventListener('resize', resize);
+        resize();
+        initGraph();
+        animate();
+    </script>
+</body>
+</html>

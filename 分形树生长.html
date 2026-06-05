@@ -1,0 +1,826 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>分形树生长 - 真实版</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            overflow: hidden;
+            background: linear-gradient(to bottom, #0a0a12 0%, #1a1a2e 50%, #16213e 100%);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        canvas { display: block; }
+        .controls {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            z-index: 10;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .controls button {
+            padding: 12px 24px;
+            border: 1px solid rgba(255,255,255,0.2);
+            background: rgba(0,0,0,0.6);
+            color: #fff;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s;
+            backdrop-filter: blur(10px);
+        }
+        .controls button:hover { 
+            background: rgba(34, 197, 94, 0.3);
+            border-color: rgba(34, 197, 94, 0.5);
+            transform: translateY(-2px);
+        }
+        .info {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            color: rgba(255,255,255,0.5);
+            font-size: 14px;
+            pointer-events: none;
+        }
+        .season-indicator {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 10px 20px;
+            background: rgba(0,0,0,0.6);
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 8px;
+            color: #fff;
+            font-size: 14px;
+            backdrop-filter: blur(10px);
+        }
+        .progress-bar {
+            position: fixed;
+            bottom: 60px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 300px;
+            height: 6px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #22c55e, #06b6d4);
+            width: 0%;
+            transition: width 0.3s;
+        }
+    </style>
+</head>
+<body>
+    <div class="controls">
+        <button onclick="growTree()">重新生长</button>
+        <button onclick="toggleWind()">风力开关</button>
+        <button onclick="changeSeason()">切换季节</button>
+        <button onclick="toggleAutoGrow()">自动生长</button>
+    </div>
+    <div class="season-indicator" id="seasonIndicator">当前季节: 春天</div>
+    <div class="progress-bar">
+        <div class="progress-fill" id="progressFill"></div>
+    </div>
+    <div class="info">点击树枝可修剪 | 移动鼠标影响风向 | 观察真实的树木生长过程</div>
+    <canvas id="canvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+
+        let width, height;
+        let branches = [];
+        let leaves = [];
+        let flowers = [];
+        let particles = [];
+        let windEnabled = true;
+        let autoGrow = false;
+        let time = 0;
+        let mouseX = 0, mouseY = 0;
+        let season = 0;
+        let growthProgress = 0;
+        let frameCount = 0;
+        const seasonNames = ['春天', '夏天', '秋天', '冬天'];
+        
+        // 性能优化：限制叶子和粒子数量
+        const MAX_LEAVES = 300;
+        const MAX_PARTICLES = 50;
+        const MAX_FLOWERS = 50;
+        
+        // 季节配置
+        const seasonConfig = {
+            0: { // 春天
+                leafColors: [[100, 140], [80, 120]],
+                flowerColors: [[300, 340], [280, 320]],
+                bgGradient: ['#0a0a12', '#1a1a2e', '#16213e'],
+                hasFlowers: true,
+                leafSize: [6, 10],
+                hasParticles: 'petals'
+            },
+            1: { // 夏天
+                leafColors: [[100, 130], [110, 140]],
+                flowerColors: [[50, 70], [30, 50]],
+                bgGradient: ['#0a1a12', '#0a2a1a', '#103020'],
+                hasFlowers: true,
+                leafSize: [8, 14],
+                hasParticles: 'fireflies'
+            },
+            2: { // 秋天
+                leafColors: [[20, 50], [30, 60], [10, 40]],
+                flowerColors: null,
+                bgGradient: ['#1a1005', '#20150a', '#302010'],
+                hasFlowers: false,
+                leafSize: [7, 12],
+                hasParticles: 'falling'
+            },
+            3: { // 冬天
+                leafColors: null,
+                flowerColors: null,
+                bgGradient: ['#0a0a15', '#0d0d1a', '#151530'],
+                hasFlowers: false,
+                leafSize: [0, 0],
+                hasParticles: 'snow'
+            }
+        };
+
+        function resize() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+        }
+
+        // 真实的树枝类
+        class Branch {
+            constructor(x, y, angle, length, depth, maxDepth, parent, thickness) {
+                this.x = x;
+                this.y = y;
+                this.angle = angle;
+                this.targetLength = length;
+                this.currentLength = 0;
+                this.depth = depth;
+                this.maxDepth = maxDepth;
+                this.parent = parent;
+                this.children = [];
+                this.leaves = []; // 关联的叶子
+                this.flowers = []; // 关联的花朵
+                // 减慢生长速度
+                this.growthRate = 0.15 + Math.random() * 0.15;
+                this.thickness = thickness || (maxDepth - depth + 1) * 2.5;
+                this.targetThickness = this.thickness;
+                this.currentThickness = 0;
+                this.swayOffset = Math.random() * Math.PI * 2;
+                this.hue = 25 + Math.random() * 10;
+                this.saturation = 40 + Math.random() * 20;
+                this.lightness = 20 + Math.random() * 15;
+                this.grown = false;
+                this.pruned = false;
+                this.hasLeaves = false;
+                this.curve = (Math.random() - 0.5) * 0.08;
+                this.segments = [];
+                this.segmentCount = Math.max(2, Math.floor(length / 25));
+                this.endX = x;
+                this.endY = y;
+                this.currentAngle = angle;
+            }
+
+            update() {
+                if (this.pruned) return;
+                
+                // 减慢长度生长
+                if (this.currentLength < this.targetLength) {
+                    this.currentLength += this.growthRate;
+                    if (this.currentLength > this.targetLength) {
+                        this.currentLength = this.targetLength;
+                    }
+                }
+                
+                // 减慢粗细生长
+                if (this.currentThickness < this.targetThickness) {
+                    this.currentThickness += this.growthRate * 0.2;
+                    if (this.currentThickness > this.targetThickness) {
+                        this.currentThickness = this.targetThickness;
+                    }
+                }
+
+                // 风力影响 - 降低频率
+                const mouseInfluence = (mouseX - width / 2) / width * 0.1;
+                const windStrength = windEnabled ? 
+                    Math.sin(time * 0.8 + this.swayOffset + this.depth * 0.3) * 0.015 * (this.depth + 1) : 0;
+                this.currentAngle = this.angle + windStrength + mouseInfluence;
+
+                this.calculateEndPosition();
+
+                // 更新子分支
+                for (let i = 0, len = this.children.length; i < len; i++) {
+                    const child = this.children[i];
+                    child.x = this.endX;
+                    child.y = this.endY;
+                    child.update();
+                }
+                
+                if (this.currentLength >= this.targetLength && !this.grown) {
+                    this.grown = true;
+                    this.spawnLeaves();
+                }
+            }
+
+            calculateEndPosition() {
+                let cx = this.x;
+                let cy = this.y;
+                this.segments = [{x: cx, y: cy}];
+                
+                const segmentLength = this.currentLength / this.segmentCount;
+                let currentAngle = this.currentAngle;
+                
+                for (let i = 0; i < this.segmentCount; i++) {
+                    currentAngle += this.curve * Math.sin(i * 0.3 + time * 0.5);
+                    cx += Math.cos(currentAngle) * segmentLength;
+                    cy += Math.sin(currentAngle) * segmentLength;
+                    this.segments.push({x: cx, y: cy});
+                }
+                
+                this.endX = cx;
+                this.endY = cy;
+            }
+
+            draw() {
+                if (this.pruned || this.currentLength < 1) return;
+
+                ctx.beginPath();
+                ctx.moveTo(this.segments[0].x, this.segments[0].y);
+                
+                for (let i = 1, len = this.segments.length; i < len; i++) {
+                    const prev = this.segments[i - 1];
+                    const curr = this.segments[i];
+                    const cpx = (prev.x + curr.x) / 2;
+                    const cpy = (prev.y + curr.y) / 2;
+                    ctx.quadraticCurveTo(prev.x, prev.y, cpx, cpy);
+                }
+                
+                ctx.lineTo(this.endX, this.endY);
+                
+                const gradient = ctx.createLinearGradient(this.x, this.y, this.endX, this.endY);
+                gradient.addColorStop(0, `hsla(${this.hue}, ${this.saturation}%, ${this.lightness}%, 0.9)`);
+                gradient.addColorStop(0.5, `hsla(${this.hue + 5}, ${this.saturation - 5}%, ${this.lightness + 5}%, 0.9)`);
+                gradient.addColorStop(1, `hsla(${this.hue + 10}, ${this.saturation - 10}%, ${this.lightness + 10}%, 0.9)`);
+                
+                ctx.strokeStyle = gradient;
+                ctx.lineWidth = this.currentThickness;
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+                ctx.stroke();
+
+                if (this.depth < 3) {
+                    ctx.strokeStyle = `hsla(${this.hue}, ${this.saturation - 20}%, ${this.lightness - 10}%, 0.3)`;
+                    ctx.lineWidth = this.currentThickness * 0.3;
+                    ctx.stroke();
+                }
+
+                if (this.currentLength < this.targetLength) {
+                    ctx.beginPath();
+                    ctx.arc(this.endX, this.endY, 2, 0, Math.PI * 2);
+                    ctx.fillStyle = `hsla(${this.hue + 60}, 100%, 70%, 0.6)`;
+                    ctx.fill();
+                }
+
+                for (let i = 0, len = this.children.length; i < len; i++) {
+                    this.children[i].draw();
+                }
+            }
+
+            grow() {
+                if (this.pruned || this.depth >= this.maxDepth || this.children.length > 0) return;
+
+                if (this.currentLength >= this.targetLength * 0.5) {
+                    const numBranches = this.depth < 2 ? 2 : (Math.random() < 0.7 ? 2 : 3);
+                    
+                    for (let i = 0; i < numBranches; i++) {
+                        const baseAngle = this.angle;
+                        const spread = Math.PI / 3.5;
+                        const angleOffset = (i - (numBranches - 1) / 2) * spread / numBranches + (Math.random() - 0.5) * 0.2;
+                        const newAngle = baseAngle + angleOffset;
+                        
+                        const lengthRatio = 0.6 + Math.random() * 0.12;
+                        const newLength = this.targetLength * lengthRatio;
+                        
+                        const newThickness = this.targetThickness * 0.65;
+                        
+                        const child = new Branch(
+                            this.endX, this.endY,
+                            newAngle, newLength,
+                            this.depth + 1, this.maxDepth,
+                            this, newThickness
+                        );
+                        this.children.push(child);
+                        branches.push(child);
+                    }
+                }
+            }
+
+            spawnLeaves() {
+                if (season === 3 || this.depth < this.maxDepth - 2) return;
+                if (this.hasLeaves) return; // 避免重复生成
+                
+                const config = seasonConfig[season];
+                const leafCount = 2 + Math.floor(Math.random() * 2); // 每根树枝2-3片叶子
+                
+                for (let i = 0; i < leafCount; i++) {
+                    const offsetX = (Math.random() - 0.5) * 25;
+                    const offsetY = (Math.random() - 0.5) * 25;
+                    const leaf = new Leaf(this.endX + offsetX, this.endY + offsetY, config, this);
+                    this.leaves.push(leaf);
+                    leaves.push(leaf);
+                }
+                
+                if (config.hasFlowers && Math.random() < 0.25) {
+                    const flower = new Flower(this.endX, this.endY, config, this);
+                    this.flowers.push(flower);
+                    flowers.push(flower);
+                }
+                
+                this.hasLeaves = true;
+            }
+
+            checkClick(mx, my) {
+                if (this.pruned) return false;
+                
+                for (let i = 0, len = this.segments.length - 1; i < len; i++) {
+                    const dist = pointToLineDistance(mx, my, this.segments[i], this.segments[i + 1]);
+                    if (dist < 15 && this.depth > 1) {
+                        this.prune();
+                        return true;
+                    }
+                }
+                
+                for (let i = 0, len = this.children.length; i < len; i++) {
+                    if (this.children[i].checkClick(mx, my)) return true;
+                }
+                return false;
+            }
+
+            prune() {
+                if (this.pruned) return;
+                this.pruned = true;
+                
+                // 标记关联的叶子为死亡
+                for (let i = 0, len = this.leaves.length; i < len; i++) {
+                    this.leaves[i].fall();
+                }
+                
+                // 标记关联的花朵为死亡
+                for (let i = 0, len = this.flowers.length; i < len; i++) {
+                    this.flowers[i].dead = true;
+                }
+                
+                // 递归修剪子分支
+                for (let i = 0, len = this.children.length; i < len; i++) {
+                    this.children[i].prune();
+                }
+            }
+        }
+
+        function pointToLineDistance(px, py, p1, p2) {
+            const A = px - p1.x;
+            const B = py - p1.y;
+            const C = p2.x - p1.x;
+            const D = p2.y - p1.y;
+            const dot = A * C + B * D;
+            const lenSq = C * C + D * D;
+            let param = -1;
+            if (lenSq !== 0) param = dot / lenSq;
+            let xx, yy;
+            if (param < 0) {
+                xx = p1.x; yy = p1.y;
+            } else if (param > 1) {
+                xx = p2.x; yy = p2.y;
+            } else {
+                xx = p1.x + param * C;
+                yy = p1.y + param * D;
+            }
+            const dx = px - xx;
+            const dy = py - yy;
+            return Math.sqrt(dx * dx + dy * dy);
+        }
+
+        class Leaf {
+            constructor(x, y, config, parentBranch) {
+                this.x = x;
+                this.y = y;
+                this.parentBranch = parentBranch; // 关联的树枝
+                this.size = 0;
+                const sizeRange = config.leafSize;
+                this.targetSize = sizeRange[0] + Math.random() * (sizeRange[1] - sizeRange[0]);
+                
+                const colorRange = config.leafColors[Math.floor(Math.random() * config.leafColors.length)];
+                this.hue = colorRange[0] + Math.random() * (colorRange[1] - colorRange[0]);
+                this.saturation = 60 + Math.random() * 30;
+                this.lightness = 40 + Math.random() * 20;
+                
+                this.life = 1;
+                this.vx = (Math.random() - 0.5) * 0.15;
+                this.vy = Math.random() * 0.15;
+                this.rotation = Math.random() * Math.PI * 2;
+                this.rotSpeed = (Math.random() - 0.5) * 0.015;
+                this.swayOffset = Math.random() * Math.PI * 2;
+                this.growthPhase = 0;
+                this.shape = Math.floor(Math.random() * 3);
+                this.dead = false;
+                this.falling = false; // 是否正在飘落
+            }
+
+            fall() {
+                // 开始飘落
+                this.falling = true;
+                this.vx = (Math.random() - 0.5) * 2;
+                this.vy = Math.random() * 1 + 0.5;
+                this.rotSpeed = (Math.random() - 0.5) * 0.08;
+            }
+
+            update() {
+                this.growthPhase += 0.02;
+                if (this.size < this.targetSize) {
+                    this.size += 0.05;
+                }
+
+                if (this.falling) {
+                    // 飘落状态
+                    this.x += this.vx + Math.sin(time * 2 + this.swayOffset) * 0.5;
+                    this.y += this.vy + 0.3;
+                    this.rotation += this.rotSpeed;
+                    this.life -= 0.003;
+                    if (this.life <= 0 || this.y > height) this.dead = true;
+                } else if (windEnabled && season === 2) {
+                    // 秋天自然落叶
+                    this.x += this.vx + Math.sin(time * 1.5 + this.swayOffset) * 0.3;
+                    this.y += this.vy + 0.4;
+                    this.rotation += this.rotSpeed;
+                    this.life -= 0.0015;
+                    if (this.life <= 0 || this.y > height) this.dead = true;
+                } else {
+                    // 正常状态 - 跟随树枝摆动
+                    this.rotation += Math.sin(time * 0.5 + this.swayOffset) * 0.008;
+                    
+                    // 如果父树枝被修剪，开始飘落
+                    if (this.parentBranch && this.parentBranch.pruned && !this.falling) {
+                        this.fall();
+                    }
+                }
+            }
+
+            draw() {
+                const alpha = this.life * 0.9;
+                const scale = Math.min(1, this.growthPhase);
+                
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.rotation);
+                ctx.scale(scale, scale);
+                
+                ctx.beginPath();
+                if (this.shape === 0) {
+                    ctx.ellipse(0, 0, this.size, this.size * 0.5, 0, 0, Math.PI * 2);
+                } else if (this.shape === 1) {
+                    ctx.moveTo(0, -this.size * 0.5);
+                    ctx.bezierCurveTo(this.size * 0.5, -this.size * 0.8, this.size * 0.8, 0, 0, this.size * 0.8);
+                    ctx.bezierCurveTo(-this.size * 0.8, 0, -this.size * 0.5, -this.size * 0.8, 0, -this.size * 0.5);
+                } else {
+                    ctx.moveTo(0, -this.size);
+                    ctx.quadraticCurveTo(this.size * 0.5, 0, 0, this.size * 0.5);
+                    ctx.quadraticCurveTo(-this.size * 0.5, 0, 0, -this.size);
+                }
+                
+                ctx.fillStyle = `hsla(${this.hue}, ${this.saturation}%, ${this.lightness}%, ${alpha})`;
+                ctx.fill();
+                
+                ctx.beginPath();
+                ctx.moveTo(0, -this.size * 0.8);
+                ctx.lineTo(0, this.size * 0.6);
+                ctx.strokeStyle = `hsla(${this.hue}, ${this.saturation + 10}%, ${this.lightness - 15}%, ${alpha * 0.5})`;
+                ctx.lineWidth = 1;
+                ctx.stroke();
+                
+                ctx.restore();
+            }
+        }
+
+        class Flower {
+            constructor(x, y, config, parentBranch) {
+                this.x = x;
+                this.y = y;
+                this.parentBranch = parentBranch; // 关联的树枝
+                this.size = 0;
+                this.targetSize = 4 + Math.random() * 3;
+                
+                const colorRange = config.flowerColors[Math.floor(Math.random() * config.flowerColors.length)];
+                this.hue = colorRange[0] + Math.random() * (colorRange[1] - colorRange[0]);
+                this.petals = 5;
+                this.life = 1;
+                this.bloomPhase = 0;
+                this.swayOffset = Math.random() * Math.PI * 2;
+                this.dead = false;
+            }
+
+            update() {
+                this.bloomPhase += 0.015;
+                if (this.size < this.targetSize) {
+                    this.size += 0.04;
+                }
+                
+                // 如果父树枝被修剪，花朵消失
+                if (this.parentBranch && this.parentBranch.pruned) {
+                    this.dead = true;
+                }
+            }
+
+            draw() {
+                const bloom = Math.min(1, this.bloomPhase);
+                const alpha = this.life * bloom;
+                const sway = Math.sin(time * 1.5 + this.swayOffset) * 0.08;
+                
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(sway);
+                
+                for (let i = 0; i < this.petals; i++) {
+                    ctx.save();
+                    ctx.rotate((Math.PI * 2 / this.petals) * i);
+                    ctx.beginPath();
+                    ctx.ellipse(this.size * 0.6, 0, this.size * 0.6 * bloom, this.size * 0.3 * bloom, 0, 0, Math.PI * 2);
+                    ctx.fillStyle = `hsla(${this.hue}, 80%, 75%, ${alpha})`;
+                    ctx.fill();
+                    ctx.restore();
+                }
+                
+                ctx.beginPath();
+                ctx.arc(0, 0, this.size * 0.25 * bloom, 0, Math.PI * 2);
+                ctx.fillStyle = `hsla(${this.hue + 30}, 100%, 50%, ${alpha})`;
+                ctx.fill();
+                
+                ctx.restore();
+            }
+        }
+
+        class Particle {
+            constructor(type) {
+                this.type = type;
+                this.reset();
+            }
+            
+            reset() {
+                this.x = Math.random() * width;
+                this.y = this.type === 'snow' ? -10 : Math.random() * height;
+                this.size = 1 + Math.random() * 2;
+                this.speed = 0.8 + Math.random() * 1.2;
+                this.sway = Math.random() * Math.PI * 2;
+                this.life = 1;
+                this.dead = false;
+                
+                if (this.type === 'firefly') {
+                    this.x = Math.random() * width;
+                    this.y = height - Math.random() * 300;
+                    this.vx = (Math.random() - 0.5) * 0.5;
+                    this.vy = (Math.random() - 0.5) * 0.3 - 0.15;
+                    this.blinkPhase = Math.random() * Math.PI * 2;
+                }
+            }
+            
+            update() {
+                this.sway += 0.015;
+                
+                if (this.type === 'snow') {
+                    this.x += Math.sin(this.sway) * 0.3;
+                    this.y += this.speed;
+                    if (this.y > height) this.reset();
+                } else if (this.type === 'petal') {
+                    this.x += Math.sin(this.sway) * 0.5 + 0.2;
+                    this.y += this.speed * 0.4;
+                    this.rotation = (this.rotation || 0) + 0.015;
+                    if (this.y > height || this.x > width) this.reset();
+                } else if (this.type === 'firefly') {
+                    this.x += this.vx + Math.sin(time * 1.5 + this.blinkPhase) * 0.2;
+                    this.y += this.vy;
+                    this.blinkPhase += 0.02;
+                    if (this.x < 0) this.x = width;
+                    if (this.x > width) this.x = 0;
+                    if (this.y < 0) this.y = height;
+                    if (this.y > height) this.y = 0;
+                }
+            }
+            
+            draw() {
+                if (this.type === 'firefly') {
+                    const blink = (Math.sin(this.blinkPhase) + 1) / 2;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                    ctx.fillStyle = `hsla(60, 100%, 70%, ${0.3 + blink * 0.7})`;
+                    ctx.fill();
+                } else if (this.type === 'snow') {
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+                    ctx.fill();
+                } else if (this.type === 'petal') {
+                    ctx.save();
+                    ctx.translate(this.x, this.y);
+                    ctx.rotate(this.rotation || 0);
+                    ctx.fillStyle = 'hsla(320, 70%, 80%, 0.6)';
+                    ctx.fillRect(-this.size, -this.size * 0.5, this.size * 2, this.size);
+                    ctx.restore();
+                }
+            }
+        }
+
+        let rootBranch;
+
+        function createTree() {
+            branches = [];
+            leaves = [];
+            flowers = [];
+            particles = [];
+            growthProgress = 0;
+            frameCount = 0;
+            
+            const config = seasonConfig[season];
+            
+            const trunk = new Branch(
+                width / 2, height - 30,
+                -Math.PI / 2,
+                100,
+                0, 8,
+                null,
+                14
+            );
+            branches.push(trunk);
+            rootBranch = trunk;
+            
+            if (config.hasParticles === 'snow') {
+                for (let i = 0; i < MAX_PARTICLES; i++) particles.push(new Particle('snow'));
+            } else if (config.hasParticles === 'petals') {
+                for (let i = 0; i < 25; i++) particles.push(new Particle('petal'));
+            } else if (config.hasParticles === 'fireflies') {
+                for (let i = 0; i < 20; i++) particles.push(new Particle('firefly'));
+            }
+        }
+
+        function growTree() {
+            createTree();
+        }
+
+        function toggleWind() {
+            windEnabled = !windEnabled;
+        }
+
+        function changeSeason() {
+            season = (season + 1) % 4;
+            document.getElementById('seasonIndicator').textContent = '当前季节: ' + seasonNames[season];
+            growTree();
+        }
+
+        function toggleAutoGrow() {
+            autoGrow = !autoGrow;
+        }
+
+        function updateProgress() {
+            let totalProgress = 0;
+            for (let i = 0, len = branches.length; i < len; i++) {
+                totalProgress += branches[i].currentLength / branches[i].targetLength;
+            }
+            growthProgress = branches.length > 0 ? totalProgress / branches.length : 0;
+            document.getElementById('progressFill').style.width = (growthProgress * 100) + '%';
+        }
+
+        function drawBackground() {
+            const config = seasonConfig[season];
+            const gradient = ctx.createLinearGradient(0, 0, 0, height);
+            for (let i = 0; i < config.bgGradient.length; i++) {
+                gradient.addColorStop(i / (config.bgGradient.length - 1), config.bgGradient[i]);
+            }
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, width, height);
+
+            // 减少星星数量
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+            for (let i = 0; i < 40; i++) {
+                const x = (i * 137.5 + time * 5) % width;
+                const y = (i * 71.3) % (height * 0.5);
+                const size = (i % 4) * 0.25;
+                const twinkle = Math.sin(time + i) * 0.5 + 0.5;
+                ctx.globalAlpha = 0.2 + twinkle * 0.8;
+                ctx.beginPath();
+                ctx.arc(x, y, size, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.globalAlpha = 1;
+
+            const moonX = width - 100;
+            const moonY = 80;
+            ctx.beginPath();
+            ctx.arc(moonX, moonY, 30, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(255, 255, 240, 0.9)';
+            ctx.fill();
+            
+            ctx.fillStyle = 'rgba(200, 200, 180, 0.3)';
+            ctx.beginPath();
+            ctx.arc(moonX - 6, moonY + 4, 5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(moonX + 8, moonY - 6, 3, 0, Math.PI * 2);
+            ctx.fill();
+
+            const groundGradient = ctx.createLinearGradient(0, height - 80, 0, height);
+            groundGradient.addColorStop(0, 'rgba(20, 30, 20, 0)');
+            groundGradient.addColorStop(1, 'rgba(10, 20, 10, 0.8)');
+            ctx.fillStyle = groundGradient;
+            ctx.fillRect(0, height - 80, width, 80);
+        }
+
+        function animate() {
+            frameCount++;
+            
+            // 每2帧渲染一次，降低CPU负载
+            if (frameCount % 2 === 0) {
+                drawBackground();
+                time += 0.016;
+
+                if (autoGrow && rootBranch) {
+                    rootBranch.grow();
+                }
+
+                if (rootBranch) {
+                    rootBranch.update();
+                    if (!autoGrow) rootBranch.grow();
+                    rootBranch.draw();
+                }
+
+                for (let i = 0, len = branches.length; i < len; i++) {
+                    const b = branches[i];
+                    if (b !== rootBranch) {
+                        b.update();
+                        if (!autoGrow) b.grow();
+                        b.draw();
+                    }
+                }
+
+                for (let i = 0, len = flowers.length; i < len; i++) {
+                    flowers[i].update();
+                    flowers[i].draw();
+                }
+
+                // 使用标记而非filter
+                let flowerWriteIndex = 0;
+                for (let i = 0, len = flowers.length; i < len; i++) {
+                    if (!flowers[i].dead) {
+                        flowers[flowerWriteIndex++] = flowers[i];
+                    }
+                }
+                flowers.length = flowerWriteIndex;
+
+                for (let i = 0, len = leaves.length; i < len; i++) {
+                    leaves[i].update();
+                    leaves[i].draw();
+                }
+
+                let leafWriteIndex = 0;
+                for (let i = 0, len = leaves.length; i < len; i++) {
+                    if (!leaves[i].dead) {
+                        leaves[leafWriteIndex++] = leaves[i];
+                    }
+                }
+                leaves.length = leafWriteIndex;
+
+                for (let i = 0, len = particles.length; i < len; i++) {
+                    particles[i].update();
+                    particles[i].draw();
+                }
+
+                if (frameCount % 10 === 0) {
+                    updateProgress();
+                }
+            }
+
+            requestAnimationFrame(animate);
+        }
+
+        canvas.addEventListener('mousemove', e => {
+            mouseX = e.clientX;
+            mouseY = e.clientY;
+        });
+
+        canvas.addEventListener('click', e => {
+            if (rootBranch && rootBranch.checkClick(e.clientX, e.clientY)) {
+                // 修剪成功
+            }
+        });
+
+        window.addEventListener('resize', resize);
+        resize();
+        growTree();
+        animate();
+    </script>
+</body>
+</html>

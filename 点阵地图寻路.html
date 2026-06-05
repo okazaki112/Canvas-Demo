@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>点阵地图寻路</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            overflow: hidden;
+            background: #0a0a0a;
+            font-family: 'Microsoft YaHei', sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+        }
+        canvas { display: block; border: 2px solid #333; }
+        .info {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            color: rgba(255,255,255,0.7);
+            font-size: 14px;
+            z-index: 10;
+        }
+        .info h1 { font-size: 18px; margin-bottom: 8px; color: #fff; }
+        .controls {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 10;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .controls button {
+            padding: 8px 16px;
+            border: 1px solid #333;
+            background: rgba(0,0,0,0.8);
+            color: #fff;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="info">
+        <h1>点阵地图寻路</h1>
+        <p>点击地图设置起点和终点，自动寻路</p>
+        <p>按住Shift点击放置障碍物</p>
+    </div>
+    <div class="controls">
+        <button onclick="resetMap()">重置地图</button>
+        <button onclick="randomObstacles()">随机障碍</button>
+    </div>
+    <canvas id="canvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        const GRID_SIZE = 30;
+        const COLS = 30;
+        const ROWS = 20;
+        const CELL_SIZE = 25;
+        
+        canvas.width = COLS * CELL_SIZE;
+        canvas.height = ROWS * CELL_SIZE;
+        
+        let grid = [];
+        let startNode = null;
+        let endNode = null;
+        let path = [];
+        let visited = [];
+        
+        class Node {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.isObstacle = false;
+                this.g = Infinity;
+                this.h = 0;
+                this.f = Infinity;
+                this.parent = null;
+                this.visited = false;
+            }
+        }
+        
+        function initGrid() {
+            grid = [];
+            for (let y = 0; y < ROWS; y++) {
+                const row = [];
+                for (let x = 0; x < COLS; x++) {
+                    row.push(new Node(x, y));
+                }
+                grid.push(row);
+            }
+            startNode = grid[1][1];
+            endNode = grid[ROWS - 2][COLS - 2];
+            path = [];
+            visited = [];
+        }
+        
+        function heuristic(a, b) {
+            return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+        }
+        
+        function findPath() {
+            if (!startNode || !endNode) return;
+            
+            for (let row of grid) {
+                for (let node of row) {
+                    node.g = Infinity;
+                    node.h = 0;
+                    node.f = Infinity;
+                    node.parent = null;
+                    node.visited = false;
+                }
+            }
+            
+            const openSet = [startNode];
+            startNode.g = 0;
+            startNode.h = heuristic(startNode, endNode);
+            startNode.f = startNode.h;
+            
+            path = [];
+            visited = [];
+            
+            while (openSet.length > 0) {
+                let current = openSet[0];
+                let currentIndex = 0;
+                
+                for (let i = 1; i < openSet.length; i++) {
+                    if (openSet[i].f < current.f) {
+                        current = openSet[i];
+                        currentIndex = i;
+                    }
+                }
+                
+                openSet.splice(currentIndex, 1);
+                current.visited = true;
+                visited.push(current);
+                
+                if (current === endNode) {
+                    let temp = current;
+                    while (temp) {
+                        path.push(temp);
+                        temp = temp.parent;
+                    }
+                    path.reverse();
+                    return;
+                }
+                
+                const neighbors = [
+                    { dx: 0, dy: -1 },
+                    { dx: 0, dy: 1 },
+                    { dx: -1, dy: 0 },
+                    { dx: 1, dy: 0 }
+                ];
+                
+                for (let n of neighbors) {
+                    const nx = current.x + n.dx;
+                    const ny = current.y + n.dy;
+                    
+                    if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) continue;
+                    
+                    const neighbor = grid[ny][nx];
+                    if (neighbor.isObstacle || neighbor.visited) continue;
+                    
+                    const tentativeG = current.g + 1;
+                    
+                    if (tentativeG < neighbor.g) {
+                        neighbor.parent = current;
+                        neighbor.g = tentativeG;
+                        neighbor.h = heuristic(neighbor, endNode);
+                        neighbor.f = neighbor.g + neighbor.h;
+                        
+                        if (!openSet.includes(neighbor)) {
+                            openSet.push(neighbor);
+                        }
+                    }
+                }
+            }
+        }
+        
+        function draw() {
+            ctx.fillStyle = '#0a0a0a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            for (let y = 0; y < ROWS; y++) {
+                for (let x = 0; x < COLS; x++) {
+                    const node = grid[y][x];
+                    const px = x * CELL_SIZE;
+                    const py = y * CELL_SIZE;
+                    
+                    if (node.isObstacle) {
+                        ctx.fillStyle = '#333';
+                        ctx.fillRect(px + 1, py + 1, CELL_SIZE - 2, CELL_SIZE - 2);
+                    } else if (node === startNode) {
+                        ctx.fillStyle = '#00ff88';
+                        ctx.fillRect(px + 1, py + 1, CELL_SIZE - 2, CELL_SIZE - 2);
+                    } else if (node === endNode) {
+                        ctx.fillStyle = '#ff6b6b';
+                        ctx.fillRect(px + 1, py + 1, CELL_SIZE - 2, CELL_SIZE - 2);
+                    } else if (path.includes(node)) {
+                        ctx.fillStyle = '#00d4ff';
+                        ctx.fillRect(px + 1, py + 1, CELL_SIZE - 2, CELL_SIZE - 2);
+                    } else if (visited.includes(node)) {
+                        ctx.fillStyle = 'rgba(100, 100, 100, 0.3)';
+                        ctx.fillRect(px + 1, py + 1, CELL_SIZE - 2, CELL_SIZE - 2);
+                    }
+                    
+                    ctx.strokeStyle = '#222';
+                    ctx.lineWidth = 0.5;
+                    ctx.strokeRect(px, py, CELL_SIZE, CELL_SIZE);
+                }
+            }
+            
+            if (path.length > 0) {
+                ctx.strokeStyle = '#00d4ff';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(path[0].x * CELL_SIZE + CELL_SIZE / 2, path[0].y * CELL_SIZE + CELL_SIZE / 2);
+                for (let i = 1; i < path.length; i++) {
+                    ctx.lineTo(path[i].x * CELL_SIZE + CELL_SIZE / 2, path[i].y * CELL_SIZE + CELL_SIZE / 2);
+                }
+                ctx.stroke();
+            }
+        }
+        
+        function animate() {
+            draw();
+            requestAnimationFrame(animate);
+        }
+        
+        canvas.addEventListener('click', e => {
+            const rect = canvas.getBoundingClientRect();
+            const x = Math.floor((e.clientX - rect.left) / CELL_SIZE);
+            const y = Math.floor((e.clientY - rect.top) / CELL_SIZE);
+            
+            if (x < 0 || x >= COLS || y < 0 || y >= ROWS) return;
+            
+            if (e.shiftKey) {
+                grid[y][x].isObstacle = !grid[y][x].isObstacle;
+            } else {
+                if (!startNode) {
+                    startNode = grid[y][x];
+                } else if (!endNode) {
+                    endNode = grid[y][x];
+                } else {
+                    startNode = grid[y][x];
+                    endNode = null;
+                    path = [];
+                }
+            }
+            
+            if (startNode && endNode) {
+                findPath();
+            }
+        });
+        
+        function resetMap() {
+            initGrid();
+        }
+        
+        function randomObstacles() {
+            for (let row of grid) {
+                for (let node of row) {
+                    if (node !== startNode && node !== endNode) {
+                        node.isObstacle = Math.random() < 0.3;
+                    }
+                }
+            }
+            if (startNode && endNode) {
+                findPath();
+            }
+        }
+        
+        initGrid();
+        animate();
+    </script>
+</body>
+</html>

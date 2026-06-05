@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>B-DNA双螺旋结构</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #0a0a0f;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+        }
+        .info {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: rgba(255,255,255,0.7);
+            font-family: Arial, sans-serif;
+            font-size: 14px;
+            pointer-events: none;
+        }
+        .legend {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            color: rgba(255,255,255,0.6);
+            font-family: Arial, sans-serif;
+            font-size: 12px;
+            pointer-events: none;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin: 5px 0;
+        }
+        .legend-color {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <div class="info">
+        <div style="font-size: 18px; margin-bottom: 8px; color: #fff;">B-DNA 双螺旋结构</div>
+        <div>移动鼠标旋转 | 滚轮缩放</div>
+    </div>
+    <div class="legend">
+        <div class="legend-item"><div class="legend-color" style="background: #ff6b6b;"></div>腺嘌呤 (A)</div>
+        <div class="legend-item"><div class="legend-color" style="background: #4ecdc4;"></div>胸腺嘧啶 (T)</div>
+        <div class="legend-item"><div class="legend-color" style="background: #ffe66d;"></div>鸟嘌呤 (G)</div>
+        <div class="legend-item"><div class="legend-color" style="background: #95e1d3;"></div>胞嘧啶 (C)</div>
+        <div style="margin-top: 10px; font-size: 11px; opacity: 0.5;">
+            右手螺旋 | 10.5碱基对/圈 | 大沟/小沟结构
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        let width, height, centerX, centerY;
+        let rotation = 0;
+        let targetRotationX = 0.3; // 初始角度展示螺旋
+        let targetRotationY = 0;
+        let currentRotationX = 0.3;
+        let currentRotationY = 0;
+        let zoom = 1.2;
+        let targetZoom = 1.2;
+        
+        // B-DNA 参数 (基于真实生物数据)
+        const numPairs = 42; // 4圈 x 10.5 = 42个碱基对
+        const basePairsPerTurn = 10.5;
+        const helixRadius = 100; // 螺旋半径
+        const risePerBase = 12; // 每个碱基对的垂直间距
+        const helixHeight = numPairs * risePerBase;
+        
+        // 碱基对颜色
+        const colors = {
+            'A': '#ff6b6b', // 腺嘌呤 - 红色
+            'T': '#4ecdc4', // 胸腺嘧啶 - 青色
+            'G': '#ffe66d', // 鸟嘌呤 - 黄色
+            'C': '#95e1d3'  // 胞嘧啶 - 绿色
+        };
+        
+        // 碱基对数据
+        const basePairs = [];
+        
+        function resize() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+            centerX = width / 2;
+            centerY = height / 2;
+        }
+        
+        // 3D投影
+        function project3D(x, y, z) {
+            const cosX = Math.cos(currentRotationX);
+            const sinX = Math.sin(currentRotationX);
+            const cosY = Math.cos(currentRotationY);
+            const sinY = Math.sin(currentRotationY);
+            
+            // 绕Y轴旋转
+            let x1 = x * cosY - z * sinY;
+            let z1 = x * sinY + z * cosY;
+            
+            // 绕X轴旋转
+            let y1 = y * cosX - z1 * sinX;
+            let z2 = y * sinX + z1 * cosX;
+            
+            // 透视投影
+            const scale = 1000 / (1000 + z2) * zoom;
+            
+            return {
+                x: centerX + x1 * scale,
+                y: centerY + y1 * scale,
+                scale: scale,
+                z: z2
+            };
+        }
+        
+        // 初始化碱基对
+        function initBasePairs() {
+            basePairs.length = 0;
+            for (let i = 0; i < numPairs; i++) {
+                // 按照查加夫法则：A=T, G=C
+                const types = [['A', 'T'], ['T', 'A'], ['G', 'C'], ['C', 'G']];
+                const pair = types[Math.floor(Math.random() * types.length)];
+                
+                basePairs.push({
+                    index: i,
+                    base1: pair[0],
+                    base2: pair[1],
+                    y: (i - numPairs / 2) * risePerBase,
+                    angle: (i / basePairsPerTurn) * Math.PI * 2
+                });
+            }
+        }
+        
+        // 绘制球体（原子/分子）
+        function drawSphere(p, radius, color, alpha) {
+            const r = radius * p.scale;
+            
+            // 主球体 - 3D效果
+            const gradient = ctx.createRadialGradient(
+                p.x - r * 0.3, p.y - r * 0.3, r * 0.1,
+                p.x, p.y, r
+            );
+            gradient.addColorStop(0, lightenColor(color, 60));
+            gradient.addColorStop(0.3, color);
+            gradient.addColorStop(0.8, darkenColor(color, 30));
+            gradient.addColorStop(1, darkenColor(color, 60));
+            
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+            ctx.fillStyle = gradient;
+            ctx.fill();
+            
+            // 高光
+            ctx.beginPath();
+            ctx.ellipse(
+                p.x - r * 0.25, p.y - r * 0.3,
+                r * 0.25, r * 0.15,
+                -Math.PI / 4, 0, Math.PI * 2
+            );
+            ctx.fillStyle = `rgba(255, 255, 255, ${0.5 * alpha})`;
+            ctx.fill();
+        }
+        
+        // 绘制圆柱形化学键
+        function drawCylinder(p1, p2, radius, color, alpha) {
+            const dx = p2.x - p1.x;
+            const dy = p2.y - p1.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            
+            if (dist < 0.5) return;
+            
+            const avgScale = (p1.scale + p2.scale) / 2;
+            const r = radius * avgScale;
+            
+            // 阴影
+            ctx.beginPath();
+            ctx.moveTo(p1.x, p1.y);
+            ctx.lineTo(p2.x, p2.y);
+            ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+            ctx.lineWidth = r * 2 + 2;
+            ctx.lineCap = 'round';
+            ctx.stroke();
+            
+            // 主体
+            ctx.beginPath();
+            ctx.moveTo(p1.x, p1.y);
+            ctx.lineTo(p2.x, p2.y);
+            ctx.strokeStyle = color;
+            ctx.globalAlpha = alpha;
+            ctx.lineWidth = r * 2;
+            ctx.stroke();
+            ctx.globalAlpha = 1;
+            
+            // 高光
+            ctx.beginPath();
+            ctx.moveTo(p1.x, p1.y);
+            ctx.lineTo(p2.x, p2.y);
+            ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+            ctx.lineWidth = r * 0.5;
+            ctx.stroke();
+        }
+        
+        // 绘制氢键（虚线）
+        function drawHydrogenBonds(b1, b2, numBonds, alpha) {
+            const dx = b2.x - b1.x;
+            const dy = b2.y - b1.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            
+            if (dist < 1) return;
+            
+            const perpX = -dy / dist;
+            const perpY = dx / dist;
+            const spacing = 5 * ((b1.scale + b2.scale) / 2);
+            
+            for (let i = 0; i < numBonds; i++) {
+                const offset = (i - (numBonds - 1) / 2) * spacing;
+                const ox = perpX * offset;
+                const oy = perpY * offset;
+                
+                ctx.beginPath();
+                ctx.moveTo(b1.x + ox, b1.y + oy);
+                ctx.lineTo(b2.x + ox, b2.y + oy);
+                ctx.strokeStyle = `rgba(200, 200, 200, ${alpha * 0.6})`;
+                ctx.lineWidth = 2 * ((b1.scale + b2.scale) / 2);
+                ctx.setLineDash([4, 4]);
+                ctx.stroke();
+            }
+            ctx.setLineDash([]);
+        }
+        
+        // 颜色工具函数
+        function darkenColor(color, percent) {
+            const num = parseInt(color.replace('#', ''), 16);
+            const amt = Math.round(2.55 * percent);
+            const R = Math.max((num >> 16) - amt, 0);
+            const G = Math.max((num >> 8 & 0x00FF) - amt, 0);
+            const B = Math.max((num & 0x0000FF) - amt, 0);
+            return '#' + (0x1000000 + R * 0x10000 + G * 0x100 + B).toString(16).slice(1);
+        }
+        
+        function lightenColor(color, percent) {
+            const num = parseInt(color.replace('#', ''), 16);
+            const amt = Math.round(2.55 * percent);
+            const R = Math.min((num >> 16) + amt, 255);
+            const G = Math.min((num >> 8 & 0x00FF) + amt, 255);
+            const B = Math.min((num & 0x0000FF) + amt, 255);
+            return '#' + (0x1000000 + R * 0x10000 + G * 0x100 + B).toString(16).slice(1);
+        }
+        
+        // 获取碱基对位置
+        function getBasePairPositions(bp) {
+            const cos = Math.cos(bp.angle + rotation);
+            const sin = Math.sin(bp.angle + rotation);
+            
+            // 糖磷酸骨架位置（外侧）- 半径1.0nm
+            const s1 = project3D(helixRadius * cos, bp.y, helixRadius * sin);
+            const s2 = project3D(-helixRadius * cos, bp.y, -helixRadius * sin);
+            
+            // 碱基位置（内侧）- 半径0.6nm
+            const baseRadius = helixRadius * 0.6;
+            const b1 = project3D(baseRadius * cos, bp.y, baseRadius * sin);
+            const b2 = project3D(-baseRadius * cos, bp.y, -baseRadius * sin);
+            
+            return { s1, s2, b1, b2 };
+        }
+        
+        function animate() {
+            // 深色背景
+            ctx.fillStyle = '#0a0a0f';
+            ctx.fillRect(0, 0, width, height);
+            
+            // 更新旋转
+            currentRotationX += (targetRotationX - currentRotationX) * 0.05;
+            currentRotationY += (targetRotationY - currentRotationY) * 0.05;
+            zoom += (targetZoom - zoom) * 0.1;
+            rotation += 0.005; // 缓慢自动旋转
+            
+            // 计算所有位置
+            const renderList = [];
+            for (let i = 0; i < numPairs; i++) {
+                const bp = basePairs[i];
+                const pos = getBasePairPositions(bp);
+                
+                // 计算平均深度用于排序
+                const avgZ = (pos.s1.z + pos.s2.z + pos.b1.z + pos.b2.z) / 4;
+                
+                renderList.push({
+                    index: i,
+                    bp: bp,
+                    pos: pos,
+                    z: avgZ
+                });
+            }
+            
+            // 按深度排序（从远到近）
+            renderList.sort((a, b) => a.z - b.z);
+            
+            // 第一步：绘制所有骨架连线（在球体下方）
+            for (let i = 0; i < renderList.length - 1; i++) {
+                const curr = renderList[i];
+                const next = renderList.find(r => r.index === curr.index + 1);
+                
+                if (next) {
+                    // 链1骨架
+                    const alpha1 = Math.max(0.3, Math.min(1, (curr.pos.s1.z + 600) / 800));
+                    drawCylinder(curr.pos.s1, next.pos.s1, 5, '#c0c0c0', alpha1);
+                    
+                    // 链2骨架
+                    const alpha2 = Math.max(0.3, Math.min(1, (curr.pos.s2.z + 600) / 800));
+                    drawCylinder(curr.pos.s2, next.pos.s2, 5, '#a0a0a0', alpha2);
+                }
+            }
+            
+            // 第二步：绘制碱基对（从远到近）
+            for (let item of renderList) {
+                const { bp, pos } = item;
+                const alpha = Math.max(0.4, Math.min(1, (item.z + 600) / 800));
+                
+                // 氢键（A-T: 2个, G-C: 3个）
+                const numHbonds = (bp.base1 === 'A' || bp.base1 === 'T') ? 2 : 3;
+                drawHydrogenBonds(pos.b1, pos.b2, numHbonds, alpha);
+                
+                // 糖-碱基连接
+                drawCylinder(pos.s1, pos.b1, 2.5, '#808080', alpha * 0.7);
+                drawCylinder(pos.s2, pos.b2, 2.5, '#808080', alpha * 0.7);
+                
+                // 碱基球
+                drawSphere(pos.b1, 9, colors[bp.base1], alpha);
+                drawSphere(pos.b2, 9, colors[bp.base2], alpha);
+                
+                // 糖球（磷酸二酯键位置）
+                drawSphere(pos.s1, 11, '#e8e4e0', alpha);
+                drawSphere(pos.s2, 11, '#d8d4d0', alpha);
+                
+                // 碱基字母标签
+                if (pos.b1.scale > 0.35) {
+                    ctx.font = `bold ${10 * pos.b1.scale}px Arial`;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                    ctx.fillText(bp.base1, pos.b1.x, pos.b1.y);
+                    ctx.fillText(bp.base2, pos.b2.x, pos.b2.y);
+                }
+            }
+            
+            requestAnimationFrame(animate);
+        }
+        
+        // 事件监听
+        window.addEventListener('resize', resize);
+        
+        window.addEventListener('mousemove', (e) => {
+            const deltaX = (e.clientX - centerX) / centerX;
+            const deltaY = (e.clientY - centerY) / centerY;
+            targetRotationY = deltaX * Math.PI;
+            targetRotationX = deltaY * Math.PI * 0.5 + 0.3;
+        });
+        
+        window.addEventListener('wheel', (e) => {
+            targetZoom *= e.deltaY > 0 ? 0.9 : 1.1;
+            targetZoom = Math.max(0.5, Math.min(2.5, targetZoom));
+        });
+        
+        window.addEventListener('touchmove', (e) => {
+            if (e.touches.length === 1) {
+                const deltaX = (e.touches[0].clientX - centerX) / centerX;
+                const deltaY = (e.touches[0].clientY - centerY) / centerY;
+                targetRotationY = deltaX * Math.PI;
+                targetRotationX = deltaY * Math.PI * 0.5 + 0.3;
+            }
+        });
+        
+        // 初始化
+        resize();
+        initBasePairs();
+        animate();
+    </script>
+</body>
+</html>

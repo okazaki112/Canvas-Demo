@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>电磁场粒子</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            overflow: hidden;
+            background: #000;
+            font-family: 'Microsoft YaHei', sans-serif;
+        }
+        canvas { display: block; }
+        .controls {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            z-index: 10;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .controls button {
+            padding: 8px 16px;
+            border: 1px solid #333;
+            background: rgba(0,0,0,0.8);
+            color: #fff;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .info {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            color: rgba(255,255,255,0.5);
+            font-size: 14px;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="controls">
+        <button onclick="addCharge('positive')">添加正电荷</button>
+        <button onclick="addCharge('negative')">添加负电荷</button>
+        <button onclick="clearCharges()">清除电荷</button>
+    </div>
+    <div class="info">点击添加电荷，观察粒子在电磁场中的运动轨迹</div>
+    <canvas id="canvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+
+        let width, height;
+        let particles = [];
+        let charges = [];
+        let fieldLines = [];
+
+        function resize() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+        }
+
+        class Charge {
+            constructor(x, y, type) {
+                this.x = x;
+                this.y = y;
+                this.type = type;
+                this.strength = type === 'positive' ? 1 : -1;
+                this.pulse = 0;
+            }
+
+            update() {
+                this.pulse += 0.05;
+            }
+
+            draw() {
+                const hue = this.type === 'positive' ? 0 : 240;
+                const pulseSize = Math.sin(this.pulse) * 5;
+
+                const gradient = ctx.createRadialGradient(
+                    this.x, this.y, 0,
+                    this.x, this.y, 30 + pulseSize
+                );
+                gradient.addColorStop(0, `hsla(${hue}, 100%, 60%, 0.8)`);
+                gradient.addColorStop(0.5, `hsla(${hue}, 100%, 50%, 0.4)`);
+                gradient.addColorStop(1, 'transparent');
+
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, 30 + pulseSize, 0, Math.PI * 2);
+                ctx.fillStyle = gradient;
+                ctx.fill();
+
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, 8, 0, Math.PI * 2);
+                ctx.fillStyle = `hsla(${hue}, 100%, 70%, 1)`;
+                ctx.fill();
+
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 12px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(this.type === 'positive' ? '+' : '-', this.x, this.y);
+            }
+        }
+
+        class FieldParticle {
+            constructor() {
+                this.reset();
+            }
+
+            reset() {
+                this.x = Math.random() * width;
+                this.y = Math.random() * height;
+                this.vx = 0;
+                this.vy = 0;
+                this.life = 1;
+                this.history = [];
+                this.maxHistory = 20;
+                this.hue = Math.random() * 60 + 180;
+            }
+
+            update() {
+                let fx = 0, fy = 0;
+
+                for (let charge of charges) {
+                    const dx = charge.x - this.x;
+                    const dy = charge.y - this.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+
+                    if (dist < 20) {
+                        this.reset();
+                        return;
+                    }
+
+                    if (dist > 0) {
+                        const force = charge.strength * 500 / (dist * dist);
+                        fx += (dx / dist) * force;
+                        fy += (dy / dist) * force;
+                    }
+                }
+
+                this.vx += fx * 0.01;
+                this.vy += fy * 0.01;
+                this.vx *= 0.95;
+                this.vy *= 0.95;
+
+                this.history.push({ x: this.x, y: this.y });
+                if (this.history.length > this.maxHistory) {
+                    this.history.shift();
+                }
+
+                this.x += this.vx;
+                this.y += this.vy;
+
+                if (this.x < 0 || this.x > width || this.y < 0 || this.y > height) {
+                    this.reset();
+                }
+            }
+
+            draw() {
+                const speed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
+                const hue = 180 + Math.min(speed * 10, 120);
+
+                ctx.beginPath();
+                for (let i = 0; i < this.history.length - 1; i++) {
+                    const alpha = (i / this.history.length) * 0.6;
+                    ctx.beginPath();
+                    ctx.moveTo(this.history[i].x, this.history[i].y);
+                    ctx.lineTo(this.history[i + 1].x, this.history[i + 1].y);
+                    ctx.strokeStyle = `hsla(${hue}, 100%, 60%, ${alpha})`;
+                    ctx.lineWidth = 1;
+                    ctx.stroke();
+                }
+
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, 2, 0, Math.PI * 2);
+                ctx.fillStyle = `hsla(${hue}, 100%, 70%, 0.9)`;
+                ctx.fill();
+            }
+        }
+
+        function initParticles() {
+            particles = [];
+            for (let i = 0; i < 300; i++) {
+                particles.push(new FieldParticle());
+            }
+        }
+
+        function drawFieldLines() {
+            if (charges.length === 0) return;
+
+            const step = 40;
+            for (let x = 0; x < width; x += step) {
+                for (let y = 0; y < height; y += step) {
+                    let fx = 0, fy = 0;
+
+                    for (let charge of charges) {
+                        const dx = charge.x - x;
+                        const dy = charge.y - y;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+
+                        if (dist > 30 && dist < 300) {
+                            const force = charge.strength * 100 / (dist * dist);
+                            fx += (dx / dist) * force;
+                            fy += (dy / dist) * force;
+                        }
+                    }
+
+                    const magnitude = Math.sqrt(fx * fx + fy * fy);
+                    if (magnitude > 0.01) {
+                        const angle = Math.atan2(fy, fx);
+                        const len = Math.min(magnitude * 50, 25);
+
+                        ctx.beginPath();
+                        ctx.moveTo(x, y);
+                        ctx.lineTo(x + Math.cos(angle) * len, y + Math.sin(angle) * len);
+                        ctx.strokeStyle = `hsla(200, 50%, 50%, ${0.1 + magnitude * 0.5})`;
+                        ctx.lineWidth = 0.5;
+                        ctx.stroke();
+
+                        const arrowSize = 3;
+                        ctx.beginPath();
+                        ctx.moveTo(x + Math.cos(angle) * len, y + Math.sin(angle) * len);
+                        ctx.lineTo(
+                            x + Math.cos(angle) * len - arrowSize * Math.cos(angle - Math.PI / 6),
+                            y + Math.sin(angle) * len - arrowSize * Math.sin(angle - Math.PI / 6)
+                        );
+                        ctx.lineTo(
+                            x + Math.cos(angle) * len - arrowSize * Math.cos(angle + Math.PI / 6),
+                            y + Math.sin(angle) * len - arrowSize * Math.sin(angle + Math.PI / 6)
+                        );
+                        ctx.closePath();
+                        ctx.fillStyle = `hsla(200, 50%, 50%, ${0.1 + magnitude * 0.5})`;
+                        ctx.fill();
+                    }
+                }
+            }
+        }
+
+        function addCharge(type) {
+            const x = width / 2 + (Math.random() - 0.5) * 200;
+            const y = height / 2 + (Math.random() - 0.5) * 200;
+            charges.push(new Charge(x, y, type));
+        }
+
+        function clearCharges() {
+            charges = [];
+        }
+
+        function animate() {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.15)';
+            ctx.fillRect(0, 0, width, height);
+
+            drawFieldLines();
+
+            for (let charge of charges) {
+                charge.update();
+                charge.draw();
+            }
+
+            for (let particle of particles) {
+                particle.update();
+                particle.draw();
+            }
+
+            requestAnimationFrame(animate);
+        }
+
+        canvas.addEventListener('click', e => {
+            const type = Math.random() > 0.5 ? 'positive' : 'negative';
+            charges.push(new Charge(e.clientX, e.clientY, type));
+        });
+
+        window.addEventListener('resize', resize);
+        resize();
+        initParticles();
+        animate();
+    </script>
+</body>
+</html>

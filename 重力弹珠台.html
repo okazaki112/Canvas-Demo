@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>重力弹珠台</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            overflow: hidden;
+            background: #0a0a0a;
+            font-family: 'Microsoft YaHei', sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+        }
+        canvas { display: block; border: 2px solid #333; }
+        .info {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            color: rgba(255,255,255,0.7);
+            font-size: 14px;
+            z-index: 10;
+        }
+        .info h1 { font-size: 18px; margin-bottom: 8px; color: #fff; }
+        .controls {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 10;
+            display: flex;
+            gap: 10px;
+        }
+        .controls button {
+            padding: 8px 16px;
+            border: 1px solid #333;
+            background: rgba(0,0,0,0.8);
+            color: #fff;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="info">
+        <h1>重力弹珠台</h1>
+        <p>点击发射弹珠，弹珠碰撞挡板反弹</p>
+        <p>得分: <span id="score">0</span></p>
+    </div>
+    <div class="controls">
+        <button onclick="resetGame()">重置</button>
+    </div>
+    <canvas id="canvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const scoreElement = document.getElementById('score');
+        
+        const GAME_WIDTH = 600;
+        const GAME_HEIGHT = 800;
+        canvas.width = GAME_WIDTH;
+        canvas.height = GAME_HEIGHT;
+        
+        let score = 0;
+        let balls = [];
+        let bumpers = [];
+        let flippers = [];
+        
+        class Ball {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.vx = (Math.random() - 0.5) * 4;
+                this.vy = 2;
+                this.radius = 8;
+                this.gravity = 0.15;
+                this.friction = 0.99;
+                this.bounce = 0.8;
+            }
+            
+            update() {
+                this.vy += this.gravity;
+                this.vx *= this.friction;
+                this.vy *= this.friction;
+                
+                this.x += this.vx;
+                this.y += this.vy;
+                
+                if (this.x - this.radius < 0) {
+                    this.x = this.radius;
+                    this.vx *= -this.bounce;
+                }
+                if (this.x + this.radius > GAME_WIDTH) {
+                    this.x = GAME_WIDTH - this.radius;
+                    this.vx *= -this.bounce;
+                }
+                if (this.y - this.radius < 0) {
+                    this.y = this.radius;
+                    this.vy *= -this.bounce;
+                }
+                if (this.y + this.radius > GAME_HEIGHT) {
+                    this.y = GAME_HEIGHT - this.radius;
+                    this.vy *= -this.bounce;
+                    this.vx *= 0.9;
+                }
+                
+                for (let bumper of bumpers) {
+                    const dx = this.x - bumper.x;
+                    const dy = this.y - bumper.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    
+                    if (dist < this.radius + bumper.radius) {
+                        const nx = dx / dist;
+                        const ny = dy / dist;
+                        
+                        this.x = bumper.x + nx * (this.radius + bumper.radius);
+                        this.y = bumper.y + ny * (this.radius + bumper.radius);
+                        
+                        const dot = this.vx * nx + this.vy * ny;
+                        this.vx -= 2 * dot * nx;
+                        this.vy -= 2 * dot * ny;
+                        
+                        this.vx *= 1.2;
+                        this.vy *= 1.2;
+                        
+                        bumper.flash = 10;
+                        score += bumper.points;
+                        scoreElement.textContent = score;
+                    }
+                }
+                
+                for (let flipper of flippers) {
+                    if (this.y + this.radius > flipper.y &&
+                        this.y - this.radius < flipper.y + flipper.height &&
+                        this.x > flipper.x &&
+                        this.x < flipper.x + flipper.width) {
+                        this.vy = -Math.abs(this.vy) * 1.5;
+                        this.vx += (this.x - (flipper.x + flipper.width / 2)) * 0.1;
+                    }
+                }
+            }
+            
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = '#fff';
+                ctx.fill();
+                ctx.strokeStyle = '#ccc';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            }
+        }
+        
+        class Bumper {
+            constructor(x, y, radius, points) {
+                this.x = x;
+                this.y = y;
+                this.radius = radius;
+                this.points = points;
+                this.flash = 0;
+            }
+            
+            draw() {
+                if (this.flash > 0) {
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.radius + 5, 0, Math.PI * 2);
+                    ctx.fillStyle = `rgba(255, 255, 255, ${this.flash / 10})`;
+                    ctx.fill();
+                    this.flash--;
+                }
+                
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = '#ff6b6b';
+                ctx.fill();
+                ctx.strokeStyle = '#ff9999';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 12px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(this.points, this.x, this.y);
+            }
+        }
+        
+        class Flipper {
+            constructor(x, y, width, height) {
+                this.x = x;
+                this.y = y;
+                this.width = width;
+                this.height = height;
+            }
+            
+            draw() {
+                ctx.fillStyle = '#00d4ff';
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+                ctx.strokeStyle = '#66e5ff';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(this.x, this.y, this.width, this.height);
+            }
+        }
+        
+        function initGame() {
+            balls = [];
+            bumpers = [];
+            flippers = [];
+            score = 0;
+            scoreElement.textContent = score;
+            
+            bumpers.push(new Bumper(150, 200, 30, 100));
+            bumpers.push(new Bumper(450, 200, 30, 100));
+            bumpers.push(new Bumper(300, 350, 40, 200));
+            bumpers.push(new Bumper(200, 500, 25, 150));
+            bumpers.push(new Bumper(400, 500, 25, 150));
+            bumpers.push(new Bumper(100, 350, 20, 50));
+            bumpers.push(new Bumper(500, 350, 20, 50));
+            
+            flippers.push(new Flipper(100, 700, 150, 20));
+            flippers.push(new Flipper(350, 700, 150, 20));
+        }
+        
+        function animate() {
+            ctx.fillStyle = '#0a0a0a';
+            ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+            
+            for (let bumper of bumpers) {
+                bumper.draw();
+            }
+            
+            for (let flipper of flippers) {
+                flipper.draw();
+            }
+            
+            for (let ball of balls) {
+                ball.update();
+                ball.draw();
+            }
+            
+            balls = balls.filter(ball => ball.y < GAME_HEIGHT + 50);
+            
+            requestAnimationFrame(animate);
+        }
+        
+        canvas.addEventListener('click', e => {
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * (GAME_WIDTH / rect.width);
+            const y = (e.clientY - rect.top) * (GAME_HEIGHT / rect.height);
+            
+            if (y < 100) {
+                balls.push(new Ball(x, y));
+            }
+        });
+        
+        canvas.addEventListener('touchstart', e => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.touches[0].clientX - rect.left) * (GAME_WIDTH / rect.width);
+            const y = (e.touches[0].clientY - rect.top) * (GAME_HEIGHT / rect.height);
+            
+            if (y < 100) {
+                balls.push(new Ball(x, y));
+            }
+        });
+        
+        function resetGame() {
+            initGame();
+        }
+        
+        initGame();
+        animate();
+    </script>
+</body>
+</html>

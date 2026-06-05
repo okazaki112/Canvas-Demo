@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>镜面水波纹</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            overflow: hidden;
+            background: #0a0a1a;
+            font-family: 'Microsoft YaHei', sans-serif;
+        }
+        canvas { display: block; }
+        .info {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            color: rgba(255,255,255,0.7);
+            font-size: 14px;
+            pointer-events: none;
+            z-index: 10;
+        }
+        .info h1 { font-size: 18px; margin-bottom: 8px; color: #fff; }
+    </style>
+</head>
+<body>
+    <div class="info">
+        <h1>镜面水波纹</h1>
+        <p>点击画面生成水波纹，画面随波纹扭曲变形</p>
+    </div>
+    <canvas id="canvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        let width, height;
+        let ripples = [];
+        let backgroundPattern;
+        
+        function resize() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+            createBackground();
+        }
+        
+        function createBackground() {
+            const patternCanvas = document.createElement('canvas');
+            patternCanvas.width = width;
+            patternCanvas.height = height;
+            const pctx = patternCanvas.getContext('2d');
+            
+            pctx.fillStyle = '#0a0a1a';
+            pctx.fillRect(0, 0, width, height);
+            
+            for (let i = 0; i < 100; i++) {
+                const x = Math.random() * width;
+                const y = Math.random() * height;
+                const size = Math.random() * 3 + 1;
+                pctx.beginPath();
+                pctx.arc(x, y, size, 0, Math.PI * 2);
+                pctx.fillStyle = `rgba(100, 150, 255, ${Math.random() * 0.3})`;
+                pctx.fill();
+            }
+            
+            for (let i = 0; i < 20; i++) {
+                const x = Math.random() * width;
+                const y = Math.random() * height;
+                const w = Math.random() * 100 + 50;
+                const h = Math.random() * 100 + 50;
+                pctx.strokeStyle = `rgba(100, 150, 255, ${Math.random() * 0.2})`;
+                pctx.lineWidth = 1;
+                pctx.strokeRect(x, y, w, h);
+            }
+            
+            backgroundPattern = patternCanvas;
+        }
+        
+        class Ripple {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.radius = 0;
+                this.maxRadius = 300;
+                this.speed = 3;
+                this.strength = 1;
+                this.decay = 0.008;
+            }
+            
+            update() {
+                this.radius += this.speed;
+                this.strength -= this.decay;
+                this.speed *= 0.99;
+            }
+            
+            draw() {
+                if (this.strength <= 0) return;
+                
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.strokeStyle = `rgba(100, 200, 255, ${this.strength * 0.5})`;
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius * 0.7, 0, Math.PI * 2);
+                ctx.strokeStyle = `rgba(100, 200, 255, ${this.strength * 0.3})`;
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            }
+            
+            isDead() {
+                return this.strength <= 0 || this.radius > this.maxRadius;
+            }
+        }
+        
+        function drawDistortedBackground() {
+            if (!backgroundPattern) return;
+            
+            ctx.drawImage(backgroundPattern, 0, 0);
+            
+            for (let ripple of ripples) {
+                if (ripple.strength <= 0) continue;
+                
+                const imageData = ctx.getImageData(0, 0, width, height);
+                const data = imageData.data;
+                const tempData = new Uint8ClampedArray(data);
+                
+                for (let y = 0; y < height; y += 2) {
+                    for (let x = 0; x < width; x += 2) {
+                        const dx = x - ripple.x;
+                        const dy = y - ripple.y;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        
+                        if (dist < ripple.radius + 50 && dist > ripple.radius - 50) {
+                            const offset = Math.sin((dist - ripple.radius) * 0.1) * ripple.strength * 10;
+                            const sourceX = Math.floor(x + (dx / dist) * offset);
+                            const sourceY = Math.floor(y + (dy / dist) * offset);
+                            
+                            if (sourceX >= 0 && sourceX < width && sourceY >= 0 && sourceY < height) {
+                                const targetIdx = (y * width + x) * 4;
+                                const sourceIdx = (sourceY * width + sourceX) * 4;
+                                
+                                data[targetIdx] = tempData[sourceIdx];
+                                data[targetIdx + 1] = tempData[sourceIdx + 1];
+                                data[targetIdx + 2] = tempData[sourceIdx + 2];
+                            }
+                        }
+                    }
+                }
+                
+                ctx.putImageData(imageData, 0, 0);
+            }
+        }
+        
+        function animate() {
+            ctx.fillStyle = '#0a0a1a';
+            ctx.fillRect(0, 0, width, height);
+            
+            drawDistortedBackground();
+            
+            for (let ripple of ripples) {
+                ripple.update();
+                ripple.draw();
+            }
+            
+            ripples = ripples.filter(r => !r.isDead());
+            
+            requestAnimationFrame(animate);
+        }
+        
+        canvas.addEventListener('click', e => {
+            ripples.push(new Ripple(e.clientX, e.clientY));
+        });
+        
+        canvas.addEventListener('touchstart', e => {
+            e.preventDefault();
+            ripples.push(new Ripple(e.touches[0].clientX, e.touches[0].clientY));
+        });
+        
+        window.addEventListener('resize', resize);
+        resize();
+        animate();
+    </script>
+</body>
+</html>

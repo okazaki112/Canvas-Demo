@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>蜂巢迷宫生成</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #0a0a1a;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+        }
+        .info {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: rgba(255,255,255,0.6);
+            font-family: Arial, sans-serif;
+            font-size: 14px;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <div class="info">点击生成新迷宫 | 鼠标悬停高亮路径</div>
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        let width, height;
+        let hexSize = 25;
+        let cols, rows;
+        let grid = [];
+        let current;
+        let stack = [];
+        let visited = [];
+        let mouseX = 0, mouseY = 0;
+        let hoveredCell = null;
+        
+        function resize() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+            init();
+        }
+        
+        class HexCell {
+            constructor(col, row) {
+                this.col = col;
+                this.row = row;
+                this.x = col * hexSize * 1.5 + hexSize;
+                this.y = row * hexSize * Math.sqrt(3) + (col % 2) * hexSize * Math.sqrt(3) / 2 + hexSize;
+                this.walls = [true, true, true, true, true, true];
+                this.visited = false;
+                this.highlight = false;
+                this.path = false;
+            }
+            
+            draw() {
+                const corners = this.getCorners();
+                
+                // 填充
+                ctx.beginPath();
+                corners.forEach((corner, i) => {
+                    if (i === 0) ctx.moveTo(corner.x, corner.y);
+                    else ctx.lineTo(corner.x, corner.y);
+                });
+                ctx.closePath();
+                
+                if (this.path) {
+                    ctx.fillStyle = 'rgba(100, 200, 255, 0.3)';
+                } else if (this.highlight) {
+                    ctx.fillStyle = 'rgba(255, 200, 100, 0.4)';
+                } else if (this.visited) {
+                    ctx.fillStyle = 'rgba(50, 100, 150, 0.2)';
+                } else {
+                    ctx.fillStyle = 'rgba(30, 50, 80, 0.1)';
+                }
+                ctx.fill();
+                
+                // 墙壁
+                ctx.strokeStyle = this.highlight ? '#ffcc66' : '#4a90d9';
+                ctx.lineWidth = this.highlight ? 2 : 1;
+                ctx.beginPath();
+                for (let i = 0; i < 6; i++) {
+                    if (this.walls[i]) {
+                        ctx.moveTo(corners[i].x, corners[i].y);
+                        ctx.lineTo(corners[(i + 1) % 6].x, corners[(i + 1) % 6].y);
+                    }
+                }
+                ctx.stroke();
+                
+                // 中心点
+                if (this.highlight) {
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, 4, 0, Math.PI * 2);
+                    ctx.fillStyle = '#ffcc66';
+                    ctx.fill();
+                }
+            }
+            
+            getCorners() {
+                const corners = [];
+                for (let i = 0; i < 6; i++) {
+                    const angle = (Math.PI / 3) * i - Math.PI / 6;
+                    corners.push({
+                        x: this.x + hexSize * Math.cos(angle),
+                        y: this.y + hexSize * Math.sin(angle)
+                    });
+                }
+                return corners;
+            }
+            
+            checkNeighbors() {
+                const neighbors = [];
+                const directions = [
+                    { dc: 1, dr: 0 }, { dc: -1, dr: 0 },
+                    { dc: 0, dr: 1 }, { dc: 0, dr: -1 },
+                    { dc: this.col % 2 === 0 ? -1 : 1, dr: this.col % 2 === 0 ? -1 : 1 },
+                    { dc: this.col % 2 === 0 ? 1 : -1, dr: this.col % 2 === 0 ? -1 : 1 }
+                ];
+                
+                for (let dir of directions) {
+                    const nc = this.col + dir.dc;
+                    const nr = this.row + dir.dr;
+                    if (nc >= 0 && nc < cols && nr >= 0 && nr < rows) {
+                        const neighbor = grid[nr * cols + nc];
+                        if (!neighbor.visited) {
+                            neighbors.push(neighbor);
+                        }
+                    }
+                }
+                
+                if (neighbors.length > 0) {
+                    return neighbors[Math.floor(Math.random() * neighbors.length)];
+                }
+                return undefined;
+            }
+            
+            removeWalls(next) {
+                const dc = next.col - this.col;
+                const dr = next.row - this.row;
+                
+                let wall1, wall2;
+                
+                if (dc === 1 && dr === 0) { wall1 = 0; wall2 = 3; }
+                else if (dc === -1 && dr === 0) { wall1 = 3; wall2 = 0; }
+                else if (dc === 0 && dr === 1) { wall1 = 1; wall2 = 4; }
+                else if (dc === 0 && dr === -1) { wall1 = 4; wall2 = 1; }
+                else if ((dc === 1 && dr === (this.col % 2 === 0 ? 0 : 1)) || 
+                         (dc === -1 && dr === (this.col % 2 === 0 ? -1 : 0))) {
+                    wall1 = this.col % 2 === 0 ? 5 : 2;
+                    wall2 = this.col % 2 === 0 ? 2 : 5;
+                }
+                else {
+                    wall1 = this.col % 2 === 0 ? 2 : 5;
+                    wall2 = this.col % 2 === 0 ? 5 : 2;
+                }
+                
+                this.walls[wall1] = false;
+                next.walls[wall2] = false;
+            }
+            
+            contains(x, y) {
+                const dx = x - this.x;
+                const dy = y - this.y;
+                return Math.sqrt(dx * dx + dy * dy) < hexSize * 0.8;
+            }
+        }
+        
+        function init() {
+            cols = Math.floor(width / (hexSize * 1.5)) + 2;
+            rows = Math.floor(height / (hexSize * Math.sqrt(3))) + 2;
+            
+            grid = [];
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    grid.push(new HexCell(c, r));
+                }
+            }
+            
+            current = grid[0];
+            current.visited = true;
+            stack = [current];
+            generateMaze();
+        }
+        
+        function generateMaze() {
+            while (stack.length > 0) {
+                const next = current.checkNeighbors();
+                if (next) {
+                    next.visited = true;
+                    current.removeWalls(next);
+                    stack.push(current);
+                    current = next;
+                } else if (stack.length > 0) {
+                    current = stack.pop();
+                }
+            }
+        }
+        
+        function findPath(start, end) {
+            // 简单的BFS找路径
+            const queue = [start];
+            const cameFrom = new Map();
+            const visited = new Set();
+            visited.add(start);
+            
+            while (queue.length > 0) {
+                const current = queue.shift();
+                if (current === end) break;
+                
+                const neighbors = getAccessibleNeighbors(current);
+                for (let neighbor of neighbors) {
+                    if (!visited.has(neighbor)) {
+                        visited.add(neighbor);
+                        cameFrom.set(neighbor, current);
+                        queue.push(neighbor);
+                    }
+                }
+            }
+            
+            // 重建路径
+            const path = [];
+            let current = end;
+            while (current !== start && cameFrom.has(current)) {
+                path.push(current);
+                current = cameFrom.get(current);
+            }
+            if (current === start) path.push(start);
+            return path.reverse();
+        }
+        
+        function getAccessibleNeighbors(cell) {
+            const neighbors = [];
+            const directions = [
+                { dc: 1, dr: 0, wall: 0 }, { dc: -1, dr: 0, wall: 3 },
+                { dc: 0, dr: 1, wall: 1 }, { dc: 0, dr: -1, wall: 4 },
+                { dc: cell.col % 2 === 0 ? -1 : 1, dr: cell.col % 2 === 0 ? -1 : 1, wall: cell.col % 2 === 0 ? 5 : 2 },
+                { dc: cell.col % 2 === 0 ? 1 : -1, dr: cell.col % 2 === 0 ? -1 : 1, wall: cell.col % 2 === 0 ? 2 : 5 }
+            ];
+            
+            for (let i = 0; i < 6; i++) {
+                if (!cell.walls[i]) {
+                    const dir = directions[i];
+                    const nc = cell.col + dir.dc;
+                    const nr = cell.row + dir.dr;
+                    if (nc >= 0 && nc < cols && nr >= 0 && nr < rows) {
+                        neighbors.push(grid[nr * cols + nc]);
+                    }
+                }
+            }
+            return neighbors;
+        }
+        
+        function animate() {
+            ctx.fillStyle = '#0a0a1a';
+            ctx.fillRect(0, 0, width, height);
+            
+            // 更新悬停状态
+            grid.forEach(cell => {
+                cell.highlight = cell.contains(mouseX, mouseY);
+                cell.path = false;
+            });
+            
+            // 找到悬停的单元格并显示路径
+            hoveredCell = grid.find(cell => cell.highlight);
+            if (hoveredCell) {
+                const start = grid[0];
+                const path = findPath(start, hoveredCell);
+                path.forEach(cell => cell.path = true);
+            }
+            
+            // 绘制所有单元格
+            grid.forEach(cell => cell.draw());
+            
+            // 标记起点
+            const start = grid[0];
+            ctx.beginPath();
+            ctx.arc(start.x, start.y, 8, 0, Math.PI * 2);
+            ctx.fillStyle = '#00ff88';
+            ctx.fill();
+            
+            requestAnimationFrame(animate);
+        }
+        
+        window.addEventListener('resize', resize);
+        
+        window.addEventListener('mousemove', (e) => {
+            mouseX = e.clientX;
+            mouseY = e.clientY;
+        });
+        
+        window.addEventListener('click', () => {
+            init();
+        });
+        
+        window.addEventListener('touchstart', (e) => {
+            mouseX = e.touches[0].clientX;
+            mouseY = e.touches[0].clientY;
+        });
+        
+        window.addEventListener('touchmove', (e) => {
+            mouseX = e.touches[0].clientX;
+            mouseY = e.touches[0].clientY;
+        });
+        
+        resize();
+        animate();
+    </script>
+</body>
+</html>

@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>涟漪扩散交互</title>
+    <style>
+        * { 
+            margin: 0; 
+            padding: 0; 
+            box-sizing: border-box; 
+        }
+        body {
+            overflow: hidden;
+            background: #000510;
+            font-family: Arial, sans-serif;
+        }
+        canvas { 
+            display: block; 
+        }
+        .info {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            color: rgba(255,255,255,0.7);
+            font-size: 14px;
+            pointer-events: none;
+            z-index: 10;
+        }
+        .info h1 { 
+            font-size: 18px; 
+            margin-bottom: 8px; 
+            color: #fff; 
+        }
+    </style>
+</head>
+<body>
+    <div class="info">
+        <h1>涟漪扩散交互</h1>
+        <p>点击或拖动产生涟漪，涟漪相互干涉</p>
+    </div>
+    <canvas id="canvas"></canvas>
+
+    <script>
+        (function() {
+            'use strict';
+            
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('2d');
+
+            let width = window.innerWidth;
+            let height = window.innerHeight;
+            let ripples = [];
+            let particles = [];
+            let mouse = { x: width / 2, y: height / 2, down: false };
+            let animationId = null;
+
+            function resize() {
+                width = window.innerWidth;
+                height = window.innerHeight;
+                canvas.width = width;
+                canvas.height = height;
+            }
+
+            class Ripple {
+                constructor(x, y, intensity) {
+                    this.x = x || width / 2;
+                    this.y = y || height / 2;
+                    this.radius = 0;
+                    this.maxRadius = 200 + (intensity || 1) * 100;
+                    this.speed = 2 + (intensity || 1);
+                    this.intensity = intensity || 1;
+                    this.life = 1;
+                    this.decay = 0.008;
+                    this.hue = Math.random() * 60 + 180;
+                    this.rings = [];
+
+                    for (let i = 0; i < 3; i++) {
+                        this.rings.push({
+                            offset: i * 20,
+                            alpha: 1 - i * 0.3
+                        });
+                    }
+                }
+
+                update() {
+                    this.radius += this.speed;
+                    this.life -= this.decay;
+                    this.speed *= 0.99;
+                }
+
+                draw() {
+                    for (let i = 0; i < this.rings.length; i++) {
+                        const ring = this.rings[i];
+                        const r = this.radius - ring.offset;
+                        if (r < 0) continue;
+
+                        const alpha = this.life * ring.alpha * (1 - r / this.maxRadius);
+                        if (alpha <= 0) continue;
+
+                        // 绘制涟漪环
+                        ctx.beginPath();
+                        ctx.arc(this.x, this.y, r, 0, Math.PI * 2);
+                        ctx.strokeStyle = 'hsla(' + this.hue + ', 100%, 60%, ' + alpha + ')';
+                        ctx.lineWidth = 2;
+                        ctx.stroke();
+
+                        // 绘制发光效果
+                        const gradient = ctx.createRadialGradient(
+                            this.x, this.y, Math.max(0, r - 5),
+                            this.x, this.y, r + 5
+                        );
+                        gradient.addColorStop(0, 'transparent');
+                        gradient.addColorStop(0.5, 'hsla(' + this.hue + ', 100%, 70%, ' + (alpha * 0.5) + ')');
+                        gradient.addColorStop(1, 'transparent');
+
+                        ctx.beginPath();
+                        ctx.arc(this.x, this.y, r + 5, 0, Math.PI * 2);
+                        ctx.fillStyle = gradient;
+                        ctx.fill();
+                    }
+                }
+
+                isDead() {
+                    return this.life <= 0 || this.radius > this.maxRadius;
+                }
+            }
+
+            class Droplet {
+                constructor(x, y) {
+                    this.x = x || 0;
+                    this.y = y || 0;
+                    this.vx = (Math.random() - 0.5) * 4;
+                    this.vy = -Math.random() * 3 - 2;
+                    this.gravity = 0.15;
+                    this.life = 1;
+                    this.decay = 0.015;
+                    this.size = Math.random() * 3 + 2;
+                    this.hue = Math.random() * 60 + 180;
+                }
+
+                update() {
+                    this.vy += this.gravity;
+                    this.x += this.vx;
+                    this.y += this.vy;
+                    this.life -= this.decay;
+                }
+
+                draw() {
+                    const alpha = this.life;
+
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                    ctx.fillStyle = 'hsla(' + this.hue + ', 100%, 70%, ' + alpha + ')';
+                    ctx.fill();
+
+                    ctx.beginPath();
+                    ctx.arc(this.x - this.vx * 2, this.y - this.vy * 2, this.size * 0.5, 0, Math.PI * 2);
+                    ctx.fillStyle = 'hsla(' + this.hue + ', 100%, 90%, ' + (alpha * 0.7) + ')';
+                    ctx.fill();
+                }
+
+                isDead() {
+                    return this.life <= 0 || this.y > height;
+                }
+            }
+
+            class InterferencePoint {
+                constructor(x, y, hue) {
+                    this.x = x || 0;
+                    this.y = y || 0;
+                    this.life = 1;
+                    this.decay = 0.02;
+                    this.hue = hue || 180;
+                    this.size = 0;
+                    this.maxSize = 5;
+                }
+
+                update() {
+                    this.life -= this.decay;
+                    if (this.size < this.maxSize) {
+                        this.size += 0.2;
+                    }
+                }
+
+                draw() {
+                    const alpha = this.life;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                    ctx.fillStyle = 'hsla(' + this.hue + ', 100%, 80%, ' + alpha + ')';
+                    ctx.fill();
+
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.size * 0.5, 0, Math.PI * 2);
+                    ctx.fillStyle = 'hsla(' + (this.hue + 30) + ', 100%, 90%, ' + alpha + ')';
+                    ctx.fill();
+                }
+
+                isDead() {
+                    return this.life <= 0;
+                }
+            }
+
+            function checkInterference() {
+                for (let i = 0; i < ripples.length; i++) {
+                    for (let j = i + 1; j < ripples.length; j++) {
+                        const r1 = ripples[i];
+                        const r2 = ripples[j];
+
+                        const dx = r2.x - r1.x;
+                        const dy = r2.y - r1.y;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+
+                        if (dist < r1.radius + r2.radius && dist > Math.abs(r1.radius - r2.radius)) {
+                            if (Math.random() < 0.1) {
+                                const midX = (r1.x + r2.x) / 2;
+                                const midY = (r1.y + r2.y) / 2;
+                                particles.push(new InterferencePoint(midX, midY, (r1.hue + r2.hue) / 2));
+                            }
+                        }
+                    }
+                }
+            }
+
+            function createRipple(x, y, intensity) {
+                intensity = intensity || 1;
+                ripples.push(new Ripple(x, y, intensity));
+
+                for (let i = 0; i < 5 * intensity; i++) {
+                    particles.push(new Droplet(x, y));
+                }
+            }
+
+            function animate() {
+                // 清除画布
+                ctx.fillStyle = 'rgba(0, 5, 16, 0.15)';
+                ctx.fillRect(0, 0, width, height);
+
+                checkInterference();
+
+                // 更新和绘制涟漪
+                for (let i = ripples.length - 1; i >= 0; i--) {
+                    const ripple = ripples[i];
+                    ripple.update();
+                    ripple.draw();
+                    if (ripple.isDead()) {
+                        ripples.splice(i, 1);
+                    }
+                }
+
+                // 更新和绘制粒子
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    const p = particles[i];
+                    p.update();
+                    p.draw();
+                    if (p.isDead()) {
+                        particles.splice(i, 1);
+                    }
+                }
+
+                // 拖动产生涟漪
+                if (mouse.down && Math.random() < 0.3) {
+                    createRipple(mouse.x, mouse.y, 0.5);
+                }
+
+                animationId = requestAnimationFrame(animate);
+            }
+
+            // 事件监听
+            canvas.addEventListener('mousedown', function(e) {
+                mouse.down = true;
+                mouse.x = e.clientX;
+                mouse.y = e.clientY;
+                createRipple(e.clientX, e.clientY, 1.5);
+            });
+
+            canvas.addEventListener('mousemove', function(e) {
+                mouse.x = e.clientX;
+                mouse.y = e.clientY;
+            });
+
+            canvas.addEventListener('mouseup', function() {
+                mouse.down = false;
+            });
+
+            canvas.addEventListener('mouseleave', function() {
+                mouse.down = false;
+            });
+
+            canvas.addEventListener('touchstart', function(e) {
+                e.preventDefault();
+                mouse.down = true;
+                const touch = e.touches[0];
+                mouse.x = touch.clientX;
+                mouse.y = touch.clientY;
+                createRipple(touch.clientX, touch.clientY, 1.5);
+            }, { passive: false });
+
+            canvas.addEventListener('touchmove', function(e) {
+                e.preventDefault();
+                const touch = e.touches[0];
+                mouse.x = touch.clientX;
+                mouse.y = touch.clientY;
+            }, { passive: false });
+
+            canvas.addEventListener('touchend', function() {
+                mouse.down = false;
+            });
+
+            window.addEventListener('resize', resize);
+
+            // 初始化
+            resize();
+            animate();
+            
+            // 页面卸载时清理
+            window.addEventListener('beforeunload', function() {
+                if (animationId) {
+                    cancelAnimationFrame(animationId);
+                }
+            });
+        })();
+    </script>
+</body>
+</html>
