@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>电路板电流</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #0a0a0a;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+        }
+        .info {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: rgba(0,255,100,0.7);
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <div class="info">点击添加电流脉冲 | 鼠标移动探测电路</div>
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        let width, height;
+        let nodes = [];
+        let connections = [];
+        let electrons = [];
+        let pulses = [];
+        let mouseX = 0, mouseY = 0;
+        let time = 0;
+        
+        function resize() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+            generateCircuit();
+        }
+        
+        class Node {
+            constructor(x, y, type) {
+                this.x = x;
+                this.y = y;
+                this.type = type; // 'chip', 'resistor', 'capacitor', 'junction'
+                this.size = type === 'chip' ? 25 : 12;
+                this.connections = [];
+                this.pulse = 0;
+            }
+            
+            draw() {
+                // 发光效果
+                if (this.pulse > 0) {
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.size * 2, 0, Math.PI * 2);
+                    const gradient = ctx.createRadialGradient(
+                        this.x, this.y, 0,
+                        this.x, this.y, this.size * 2
+                    );
+                    gradient.addColorStop(0, `rgba(0, 255, 100, ${this.pulse * 0.5})`);
+                    gradient.addColorStop(1, 'transparent');
+                    ctx.fillStyle = gradient;
+                    ctx.fill();
+                    this.pulse *= 0.95;
+                }
+                
+                // 节点主体
+                ctx.beginPath();
+                if (this.type === 'chip') {
+                    ctx.rect(this.x - this.size, this.y - this.size * 0.6, this.size * 2, this.size * 1.2);
+                } else if (this.type === 'resistor') {
+                    ctx.rect(this.x - this.size, this.y - this.size * 0.4, this.size * 2, this.size * 0.8);
+                } else if (this.type === 'capacitor') {
+                    ctx.moveTo(this.x - this.size * 0.3, this.y - this.size);
+                    ctx.lineTo(this.x - this.size * 0.3, this.y + this.size);
+                    ctx.moveTo(this.x + this.size * 0.3, this.y - this.size);
+                    ctx.lineTo(this.x + this.size * 0.3, this.y + this.size);
+                } else {
+                    ctx.arc(this.x, this.y, this.size * 0.5, 0, Math.PI * 2);
+                }
+                
+                ctx.strokeStyle = '#00ff64';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                
+                // 填充
+                ctx.fillStyle = '#0a1a0a';
+                if (this.type !== 'capacitor') {
+                    ctx.fill();
+                }
+                
+                // 标签
+                if (this.type === 'chip') {
+                    ctx.fillStyle = '#00ff64';
+                    ctx.font = '10px monospace';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('IC', this.x, this.y + 3);
+                }
+            }
+        }
+        
+        class Connection {
+            constructor(node1, node2) {
+                this.node1 = node1;
+                this.node2 = node2;
+                this.path = this.calculatePath();
+            }
+            
+            calculatePath() {
+                // 创建直角线路径
+                const midX = (this.node1.x + this.node2.x) / 2;
+                return [
+                    { x: this.node1.x, y: this.node1.y },
+                    { x: midX, y: this.node1.y },
+                    { x: midX, y: this.node2.y },
+                    { x: this.node2.x, y: this.node2.y }
+                ];
+            }
+            
+            draw() {
+                ctx.beginPath();
+                ctx.moveTo(this.path[0].x, this.path[0].y);
+                for (let i = 1; i < this.path.length; i++) {
+                    ctx.lineTo(this.path[i].x, this.path[i].y);
+                }
+                
+                // 线路发光
+                ctx.strokeStyle = '#004420';
+                ctx.lineWidth = 6;
+                ctx.stroke();
+                
+                ctx.strokeStyle = '#008830';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+            }
+            
+            getLength() {
+                let len = 0;
+                for (let i = 1; i < this.path.length; i++) {
+                    const dx = this.path[i].x - this.path[i-1].x;
+                    const dy = this.path[i].y - this.path[i-1].y;
+                    len += Math.sqrt(dx * dx + dy * dy);
+                }
+                return len;
+            }
+            
+            getPointAt(distance) {
+                let currentDist = 0;
+                for (let i = 1; i < this.path.length; i++) {
+                    const dx = this.path[i].x - this.path[i-1].x;
+                    const dy = this.path[i].y - this.path[i-1].y;
+                    const segLen = Math.sqrt(dx * dx + dy * dy);
+                    
+                    if (currentDist + segLen >= distance) {
+                        const t = (distance - currentDist) / segLen;
+                        return {
+                            x: this.path[i-1].x + dx * t,
+                            y: this.path[i-1].y + dy * t
+                        };
+                    }
+                    currentDist += segLen;
+                }
+                return this.path[this.path.length - 1];
+            }
+        }
+        
+        class Electron {
+            constructor(connection) {
+                this.connection = connection;
+                this.distance = 0;
+                this.speed = 3 + Math.random() * 2;
+                this.size = 3 + Math.random() * 2;
+                this.trail = [];
+            }
+            
+            update() {
+                this.distance += this.speed;
+                const pos = this.connection.getPointAt(this.distance);
+                
+                this.trail.push({ x: pos.x, y: pos.y });
+                if (this.trail.length > 8) this.trail.shift();
+                
+                if (this.distance >= this.connection.getLength()) {
+                    // 到达终点，触发节点脉冲
+                    this.connection.node2.pulse = 1;
+                    return false;
+                }
+                return true;
+            }
+            
+            draw() {
+                // 拖尾
+                for (let i = 0; i < this.trail.length; i++) {
+                    const alpha = i / this.trail.length;
+                    ctx.beginPath();
+                    ctx.arc(this.trail[i].x, this.trail[i].y, this.size * alpha, 0, Math.PI * 2);
+                    ctx.fillStyle = `rgba(0, 255, 100, ${alpha * 0.5})`;
+                    ctx.fill();
+                }
+                
+                // 主体
+                const pos = this.connection.getPointAt(this.distance);
+                ctx.beginPath();
+                ctx.arc(pos.x, pos.y, this.size, 0, Math.PI * 2);
+                ctx.fillStyle = '#00ff64';
+                ctx.fill();
+                
+                // 光晕
+                ctx.beginPath();
+                ctx.arc(pos.x, pos.y, this.size * 3, 0, Math.PI * 2);
+                const gradient = ctx.createRadialGradient(pos.x, pos.y, 0, pos.x, pos.y, this.size * 3);
+                gradient.addColorStop(0, 'rgba(0, 255, 100, 0.4)');
+                gradient.addColorStop(1, 'transparent');
+                ctx.fillStyle = gradient;
+                ctx.fill();
+            }
+        }
+        
+        function generateCircuit() {
+            nodes = [];
+            connections = [];
+            
+            const cols = 6;
+            const rows = 4;
+            const cellW = width / (cols + 1);
+            const cellH = height / (rows + 1);
+            
+            // 创建节点网格
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    const x = cellW * (c + 1);
+                    const y = cellH * (r + 1);
+                    
+                    let type = 'junction';
+                    if (Math.random() < 0.15) type = 'chip';
+                    else if (Math.random() < 0.3) type = 'resistor';
+                    else if (Math.random() < 0.4) type = 'capacitor';
+                    
+                    nodes.push(new Node(x, y, type));
+                }
+            }
+            
+            // 创建连接
+            for (let i = 0; i < nodes.length; i++) {
+                const node = nodes[i];
+                const numConnections = 1 + Math.floor(Math.random() * 3);
+                
+                for (let j = 0; j < numConnections; j++) {
+                    const target = nodes[Math.floor(Math.random() * nodes.length)];
+                    if (target !== node) {
+                        const exists = connections.some(c => 
+                            (c.node1 === node && c.node2 === target) ||
+                            (c.node1 === target && c.node2 === node)
+                        );
+                        if (!exists) {
+                            connections.push(new Connection(node, target));
+                        }
+                    }
+                }
+            }
+        }
+        
+        function drawGrid() {
+            ctx.strokeStyle = 'rgba(0, 50, 20, 0.3)';
+            ctx.lineWidth = 1;
+            
+            const gridSize = 40;
+            for (let x = 0; x < width; x += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, height);
+                ctx.stroke();
+            }
+            for (let y = 0; y < height; y += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(width, y);
+                ctx.stroke();
+            }
+        }
+        
+        function drawMouseProbe() {
+            // 鼠标探测效果
+            ctx.beginPath();
+            ctx.arc(mouseX, mouseY, 30, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(0, 255, 100, 0.3)';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([5, 5]);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            
+            // 扫描线
+            ctx.beginPath();
+            ctx.moveTo(mouseX - 40, mouseY);
+            ctx.lineTo(mouseX + 40, mouseY);
+            ctx.moveTo(mouseX, mouseY - 40);
+            ctx.lineTo(mouseX, mouseY + 40);
+            ctx.strokeStyle = 'rgba(0, 255, 100, 0.2)';
+            ctx.stroke();
+        }
+        
+        function init() {
+            resize();
+        }
+        
+        function animate() {
+            time += 0.016;
+            
+            // 背景
+            ctx.fillStyle = '#0a0a0a';
+            ctx.fillRect(0, 0, width, height);
+            
+            drawGrid();
+            
+            // 绘制连接
+            connections.forEach(conn => conn.draw());
+            
+            // 随机产生电子
+            if (Math.random() < 0.03) {
+                const conn = connections[Math.floor(Math.random() * connections.length)];
+                electrons.push(new Electron(conn));
+                conn.node1.pulse = 1;
+            }
+            
+            // 更新和绘制电子
+            electrons = electrons.filter(electron => {
+                const alive = electron.update();
+                electron.draw();
+                return alive;
+            });
+            
+            // 绘制节点
+            nodes.forEach(node => node.draw());
+            
+            drawMouseProbe();
+            
+            requestAnimationFrame(animate);
+        }
+        
+        window.addEventListener('resize', resize);
+        
+        window.addEventListener('mousemove', (e) => {
+            mouseX = e.clientX;
+            mouseY = e.clientY;
+        });
+        
+        window.addEventListener('click', (e) => {
+            // 在点击位置产生脉冲
+            for (let i = 0; i < 5; i++) {
+                const conn = connections[Math.floor(Math.random() * connections.length)];
+                if (conn) {
+                    electrons.push(new Electron(conn));
+                    conn.node1.pulse = 1;
+                }
+            }
+        });
+        
+        window.addEventListener('touchmove', (e) => {
+            mouseX = e.touches[0].clientX;
+            mouseY = e.touches[0].clientY;
+        });
+        
+        window.addEventListener('touchstart', (e) => {
+            for (let i = 0; i < 5; i++) {
+                const conn = connections[Math.floor(Math.random() * connections.length)];
+                if (conn) {
+                    electrons.push(new Electron(conn));
+                    conn.node1.pulse = 1;
+                }
+            }
+        });
+        
+        init();
+        animate();
+    </script>
+</body>
+</html>

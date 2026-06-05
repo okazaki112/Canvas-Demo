@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>引力黑洞画布</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            overflow: hidden;
+            background: #000;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        canvas { display: block; }
+        .info {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            color: rgba(255,255,255,0.7);
+            font-size: 14px;
+            pointer-events: none;
+            z-index: 10;
+        }
+        .info h1 { font-size: 18px; margin-bottom: 8px; color: #fff; }
+        .controls {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 15px;
+            z-index: 10;
+        }
+        .controls button {
+            padding: 12px 24px;
+            background: rgba(255,255,255,0.1);
+            border: 1px solid rgba(255,255,255,0.2);
+            color: #fff;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s;
+            backdrop-filter: blur(10px);
+        }
+        .controls button:hover {
+            background: rgba(255,255,255,0.2);
+            transform: translateY(-2px);
+        }
+    </style>
+</head>
+<body>
+    <div class="info">
+        <h1>引力黑洞画布</h1>
+        <p>长按鼠标生成黑洞吸附粒子，松开爆炸四散</p>
+    </div>
+    <div class="controls">
+        <button onclick="resetStars()">重置星空</button>
+        <button onclick="toggleAutoMode()">自动模式</button>
+    </div>
+    <canvas id="canvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        let width, height;
+        let stars = [];
+        let blackHole = { x: 0, y: 0, active: false, strength: 0, rotation: 0 };
+        let explosionParticles = [];
+        let autoMode = false;
+        let autoTimer = 0;
+        
+        const MAX_STARS = 200;
+        const MAX_EXPLOSION_PARTICLES = 150;
+        
+        function resize() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+            initStars();
+        }
+        
+        class Star {
+            constructor() {
+                this.reset();
+            }
+            
+            reset() {
+                this.x = Math.random() * width;
+                this.y = Math.random() * height;
+                this.size = Math.random() * 1.5 + 0.5;
+                this.baseSpeed = Math.random() * 0.3 + 0.1;
+                this.angle = Math.random() * Math.PI * 2;
+                this.vx = Math.cos(this.angle) * this.baseSpeed;
+                this.vy = Math.sin(this.angle) * this.baseSpeed;
+                this.hue = Math.random() * 60 + 200;
+                this.brightness = Math.random() * 0.5 + 0.5;
+                this.twinklePhase = Math.random() * Math.PI * 2;
+            }
+            
+            update() {
+                this.twinklePhase += 0.05;
+                
+                if (blackHole.active) {
+                    const dx = blackHole.x - this.x;
+                    const dy = blackHole.y - this.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    
+                    if (dist > 15) {
+                        // 引力计算
+                        const force = Math.min(blackHole.strength * 500 / (dist * dist + 100), 3);
+                        this.vx += (dx / dist) * force * 0.1;
+                        this.vy += (dy / dist) * force * 0.1;
+                    } else {
+                        // 被吞噬
+                        this.reset();
+                        this.x = blackHole.x + (Math.random() - 0.5) * 10;
+                        this.y = blackHole.y + (Math.random() - 0.5) * 10;
+                    }
+                } else {
+                    // 正常漂移
+                    this.vx += (Math.cos(this.angle) * this.baseSpeed - this.vx) * 0.02;
+                    this.vy += (Math.sin(this.angle) * this.baseSpeed - this.vy) * 0.02;
+                }
+                
+                // 速度限制
+                const speed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
+                if (speed > 8) {
+                    this.vx = (this.vx / speed) * 8;
+                    this.vy = (this.vy / speed) * 8;
+                }
+                
+                this.x += this.vx;
+                this.y += this.vy;
+                
+                // 边界处理
+                if (this.x < 0) this.x = width;
+                if (this.x > width) this.x = 0;
+                if (this.y < 0) this.y = height;
+                if (this.y > height) this.y = 0;
+            }
+            
+            draw() {
+                const twinkle = Math.sin(this.twinklePhase) * 0.3 + 0.7;
+                const alpha = this.brightness * twinkle;
+                
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fillStyle = `hsla(${this.hue}, 80%, 70%, ${alpha})`;
+                ctx.fill();
+                
+                // 光晕
+                if (this.size > 1) {
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.size * 3, 0, Math.PI * 2);
+                    const gradient = ctx.createRadialGradient(
+                        this.x, this.y, 0,
+                        this.x, this.y, this.size * 3
+                    );
+                    gradient.addColorStop(0, `hsla(${this.hue}, 80%, 70%, ${alpha * 0.3})`);
+                    gradient.addColorStop(1, 'transparent');
+                    ctx.fillStyle = gradient;
+                    ctx.fill();
+                }
+            }
+        }
+        
+        class ExplosionParticle {
+            constructor(x, y, angle, speed) {
+                this.x = x;
+                this.y = y;
+                this.vx = Math.cos(angle) * speed;
+                this.vy = Math.sin(angle) * speed;
+                this.life = 1;
+                this.decay = 0.008 + Math.random() * 0.008;
+                this.size = Math.random() * 3 + 1;
+                this.hue = Math.random() * 60 + 280;
+                this.trail = [];
+                this.maxTrailLength = 5;
+            }
+            
+            update() {
+                // 保存轨迹
+                this.trail.push({ x: this.x, y: this.y });
+                if (this.trail.length > this.maxTrailLength) {
+                    this.trail.shift();
+                }
+                
+                this.x += this.vx;
+                this.y += this.vy;
+                this.vx *= 0.98;
+                this.vy *= 0.98;
+                this.life -= this.decay;
+                
+                // 边界反弹
+                if (this.x < 0 || this.x > width) {
+                    this.vx *= -0.8;
+                    this.x = Math.max(0, Math.min(width, this.x));
+                }
+                if (this.y < 0 || this.y > height) {
+                    this.vy *= -0.8;
+                    this.y = Math.max(0, Math.min(height, this.y));
+                }
+            }
+            
+            draw() {
+                const alpha = this.life;
+                
+                // 绘制轨迹
+                if (this.trail.length > 1) {
+                    ctx.beginPath();
+                    ctx.moveTo(this.trail[0].x, this.trail[0].y);
+                    for (let i = 1; i < this.trail.length; i++) {
+                        ctx.lineTo(this.trail[i].x, this.trail[i].y);
+                    }
+                    ctx.strokeStyle = `hsla(${this.hue}, 100%, 60%, ${alpha * 0.5})`;
+                    ctx.lineWidth = this.size * 0.5;
+                    ctx.stroke();
+                }
+                
+                // 绘制粒子
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fillStyle = `hsla(${this.hue}, 100%, 70%, ${alpha})`;
+                ctx.fill();
+                
+                // 发光
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size * 2, 0, Math.PI * 2);
+                const gradient = ctx.createRadialGradient(
+                    this.x, this.y, 0,
+                    this.x, this.y, this.size * 2
+                );
+                gradient.addColorStop(0, `hsla(${this.hue}, 100%, 70%, ${alpha * 0.5})`);
+                gradient.addColorStop(1, 'transparent');
+                ctx.fillStyle = gradient;
+                ctx.fill();
+            }
+            
+            isDead() {
+                return this.life <= 0;
+            }
+        }
+        
+        class AccretionDisk {
+            constructor() {
+                this.particles = [];
+            }
+            
+            update(bx, by) {
+                // 添加新粒子
+                if (Math.random() < 0.3) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const dist = 30 + Math.random() * 50;
+                    this.particles.push({
+                        x: bx + Math.cos(angle) * dist,
+                        y: by + Math.sin(angle) * dist * 0.3,
+                        angle: angle,
+                        dist: dist,
+                        speed: 0.05 + Math.random() * 0.05,
+                        life: 1,
+                        hue: 280 + Math.random() * 40
+                    });
+                }
+                
+                // 更新粒子
+                for (let p of this.particles) {
+                    p.angle += p.speed;
+                    p.dist *= 0.995;
+                    p.life *= 0.98;
+                    p.x = bx + Math.cos(p.angle) * p.dist;
+                    p.y = by + Math.sin(p.angle) * p.dist * 0.3;
+                }
+                
+                this.particles = this.particles.filter(p => p.life > 0.1 && p.dist > 20);
+            }
+            
+            draw() {
+                for (let p of this.particles) {
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, 2, 0, Math.PI * 2);
+                    ctx.fillStyle = `hsla(${p.hue}, 100%, 70%, ${p.life})`;
+                    ctx.fill();
+                }
+            }
+        }
+        
+        let accretionDisk = new AccretionDisk();
+        
+        function initStars() {
+            stars = [];
+            for (let i = 0; i < MAX_STARS; i++) {
+                stars.push(new Star());
+            }
+        }
+        
+        function resetStars() {
+            initStars();
+            explosionParticles = [];
+        }
+        
+        function toggleAutoMode() {
+            autoMode = !autoMode;
+            if (autoMode) {
+                autoTimer = 0;
+            } else {
+                blackHole.active = false;
+            }
+        }
+        
+        function drawBlackHole() {
+            if (!blackHole.active) return;
+            
+            blackHole.rotation += 0.02;
+            const time = Date.now() * 0.002;
+            
+            // 吸积盘
+            accretionDisk.update(blackHole.x, blackHole.y);
+            accretionDisk.draw();
+            
+            // 旋转光环
+            for (let i = 0; i < 4; i++) {
+                const radius = 25 + i * 15;
+                const alpha = 0.5 - i * 0.1;
+                const hue = 280 + i * 15;
+                
+                ctx.save();
+                ctx.translate(blackHole.x, blackHole.y);
+                ctx.rotate(blackHole.rotation * (1 + i * 0.3));
+                
+                ctx.beginPath();
+                ctx.ellipse(0, 0, radius, radius * 0.25, 0, 0, Math.PI * 2);
+                ctx.strokeStyle = `hsla(${hue}, 100%, 60%, ${alpha})`;
+                ctx.lineWidth = 3;
+                ctx.stroke();
+                
+                ctx.restore();
+            }
+            
+            // 事件视界
+            const gradient = ctx.createRadialGradient(
+                blackHole.x, blackHole.y, 0,
+                blackHole.x, blackHole.y, 80
+            );
+            gradient.addColorStop(0, 'rgba(0, 0, 0, 1)');
+            gradient.addColorStop(0.3, 'rgba(20, 0, 40, 0.95)');
+            gradient.addColorStop(0.6, 'rgba(60, 0, 100, 0.6)');
+            gradient.addColorStop(0.9, 'rgba(100, 0, 150, 0.2)');
+            gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+            
+            ctx.beginPath();
+            ctx.arc(blackHole.x, blackHole.y, 80, 0, Math.PI * 2);
+            ctx.fillStyle = gradient;
+            ctx.fill();
+            
+            // 奇点
+            ctx.beginPath();
+            ctx.arc(blackHole.x, blackHole.y, 15, 0, Math.PI * 2);
+            ctx.fillStyle = '#000';
+            ctx.fill();
+            ctx.strokeStyle = `hsla(${280 + Math.sin(time) * 20}, 100%, 70%, 0.9)`;
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            
+            // 引力透镜效果（周围星空扭曲）
+            ctx.save();
+            ctx.globalCompositeOperation = 'screen';
+            for (let i = 0; i < 8; i++) {
+                const angle = (i / 8) * Math.PI * 2 + time;
+                const x = blackHole.x + Math.cos(angle) * 100;
+                const y = blackHole.y + Math.sin(angle) * 100;
+                
+                ctx.beginPath();
+                ctx.moveTo(blackHole.x, blackHole.y);
+                ctx.quadraticCurveTo(
+                    blackHole.x + Math.cos(angle + 0.5) * 60,
+                    blackHole.y + Math.sin(angle + 0.5) * 60,
+                    x, y
+                );
+                ctx.strokeStyle = `hsla(${300 + i * 10}, 100%, 70%, 0.1)`;
+                ctx.lineWidth = 2;
+                ctx.stroke();
+            }
+            ctx.restore();
+        }
+        
+        function explode() {
+            // 限制爆炸粒子数量
+            if (explosionParticles.length > MAX_EXPLOSION_PARTICLES) {
+                explosionParticles = explosionParticles.slice(-MAX_EXPLOSION_PARTICLES);
+            }
+            
+            const particleCount = 30;
+            for (let i = 0; i < particleCount; i++) {
+                const angle = (i / particleCount) * Math.PI * 2 + Math.random() * 0.5;
+                const speed = 3 + Math.random() * 8;
+                explosionParticles.push(new ExplosionParticle(
+                    blackHole.x, blackHole.y, angle, speed
+                ));
+            }
+        }
+        
+        let lastTime = 0;
+        const targetFPS = 60;
+        const frameInterval = 1000 / targetFPS;
+        
+        function animate(currentTime) {
+            requestAnimationFrame(animate);
+            
+            // 帧率控制
+            const deltaTime = currentTime - lastTime;
+            if (deltaTime < frameInterval) return;
+            lastTime = currentTime - (deltaTime % frameInterval);
+            
+            // 自动模式
+            if (autoMode) {
+                autoTimer += 0.016;
+                if (autoTimer < 2) {
+                    blackHole.active = true;
+                    blackHole.x = width / 2 + Math.sin(autoTimer) * 100;
+                    blackHole.y = height / 2 + Math.cos(autoTimer * 0.7) * 50;
+                    blackHole.strength = Math.min(blackHole.strength + 0.3, 10);
+                } else if (autoTimer < 2.1) {
+                    if (blackHole.active) {
+                        explode();
+                        blackHole.active = false;
+                    }
+                } else {
+                    autoTimer = 0;
+                }
+            }
+            
+            // 背景
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.15)';
+            ctx.fillRect(0, 0, width, height);
+            
+            // 黑洞强度增长
+            if (blackHole.active) {
+                blackHole.strength = Math.min(blackHole.strength + 0.3, 10);
+            }
+            
+            // 更新和绘制星星
+            for (let star of stars) {
+                star.update();
+                star.draw();
+            }
+            
+            // 绘制黑洞
+            drawBlackHole();
+            
+            // 更新和绘制爆炸粒子
+            for (let i = explosionParticles.length - 1; i >= 0; i--) {
+                explosionParticles[i].update();
+                explosionParticles[i].draw();
+                if (explosionParticles[i].isDead()) {
+                    explosionParticles.splice(i, 1);
+                }
+            }
+        }
+        
+        // 鼠标事件
+        canvas.addEventListener('mousedown', e => {
+            if (autoMode) return;
+            blackHole.active = true;
+            blackHole.x = e.clientX;
+            blackHole.y = e.clientY;
+            blackHole.strength = 0;
+        });
+        
+        canvas.addEventListener('mousemove', e => {
+            if (autoMode) return;
+            if (blackHole.active) {
+                blackHole.x = e.clientX;
+                blackHole.y = e.clientY;
+            }
+        });
+        
+        canvas.addEventListener('mouseup', () => {
+            if (autoMode) return;
+            if (blackHole.active) {
+                explode();
+                blackHole.active = false;
+            }
+        });
+        
+        canvas.addEventListener('touchstart', e => {
+            if (autoMode) return;
+            e.preventDefault();
+            blackHole.active = true;
+            blackHole.x = e.touches[0].clientX;
+            blackHole.y = e.touches[0].clientY;
+            blackHole.strength = 0;
+        });
+        
+        canvas.addEventListener('touchmove', e => {
+            if (autoMode) return;
+            e.preventDefault();
+            if (blackHole.active) {
+                blackHole.x = e.touches[0].clientX;
+                blackHole.y = e.touches[0].clientY;
+            }
+        });
+        
+        canvas.addEventListener('touchend', () => {
+            if (autoMode) return;
+            if (blackHole.active) {
+                explode();
+                blackHole.active = false;
+            }
+        });
+        
+        window.addEventListener('resize', resize);
+        resize();
+        requestAnimationFrame(animate);
+    </script>
+</body>
+</html>

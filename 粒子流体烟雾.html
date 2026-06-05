@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>粒子流体烟雾</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            overflow: hidden;
+            background: #0a0a0a;
+            font-family: 'Microsoft YaHei', sans-serif;
+        }
+        canvas { display: block; }
+        .info {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            color: rgba(255,255,255,0.7);
+            font-size: 14px;
+            pointer-events: none;
+            z-index: 10;
+        }
+        .info h1 { font-size: 18px; margin-bottom: 8px; color: #fff; }
+    </style>
+</head>
+<body>
+    <div class="info">
+        <h1>粒子流体烟雾</h1>
+        <p>鼠标划开烟雾形成空洞</p>
+    </div>
+    <canvas id="canvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        let width, height;
+        let particles = [];
+        let mouse = { x: -1000, y: -1000, active: false };
+        let time = 0;
+        
+        const PARTICLE_COUNT = 800;
+        
+        function resize() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+            initParticles();
+        }
+        
+        class SmokeParticle {
+            constructor() {
+                this.reset();
+            }
+            
+            reset() {
+                this.x = Math.random() * width;
+                this.y = height + Math.random() * 100;
+                this.vx = (Math.random() - 0.5) * 0.5;
+                this.vy = -Math.random() * 1.5 - 0.5;
+                this.size = Math.random() * 40 + 20;
+                this.life = Math.random() * 0.5 + 0.5;
+                this.maxLife = this.life;
+                this.hue = Math.random() * 60 + 300;
+                this.saturation = Math.random() * 30 + 50;
+            }
+            
+            update() {
+                time += 0.001;
+
+                const noiseX = Math.sin(time * 2 + this.y * 0.005) * 0.8;
+                const noiseY = Math.cos(time * 1.5 + this.x * 0.005) * 0.3;
+                const vortexX = -(this.y - height / 2) * 0.002;
+                const vortexY = (this.x - width / 2) * 0.002;
+
+                this.x += this.vx + noiseX + vortexX;
+                this.y += this.vy + noiseY + vortexY;
+                this.life -= 0.003;
+
+                const dx = mouse.x - this.x;
+                const dy = mouse.y - this.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+
+                if (mouse.active && dist < 150) {
+                    const force = (150 - dist) / 150;
+                    const angle = Math.atan2(dy, dx);
+                    const perpAngle = angle + Math.PI / 2;
+                    this.vx += Math.cos(perpAngle) * force * 2;
+                    this.vy += Math.sin(perpAngle) * force * 2;
+                }
+
+                this.vx *= 0.98;
+                this.vy *= 0.98;
+
+                if (this.life <= 0 || this.y < -100) {
+                    this.reset();
+                }
+            }
+            
+            draw() {
+                const alpha = (this.life / this.maxLife) * 0.15;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fillStyle = `hsla(${this.hue}, ${this.saturation}%, 60%, ${alpha})`;
+                ctx.fill();
+            }
+        }
+        
+        function initParticles() {
+            particles = [];
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                const p = new SmokeParticle();
+                p.y = Math.random() * height;
+                particles.push(p);
+            }
+        }
+        
+        function animate() {
+            ctx.fillStyle = 'rgba(10, 10, 10, 0.1)';
+            ctx.fillRect(0, 0, width, height);
+            
+            for (let p of particles) {
+                p.update();
+                p.draw();
+            }
+            
+            requestAnimationFrame(animate);
+        }
+        
+        canvas.addEventListener('mousemove', e => {
+            mouse.x = e.clientX;
+            mouse.y = e.clientY;
+            mouse.active = true;
+        });
+        
+        canvas.addEventListener('mouseleave', () => {
+            mouse.active = false;
+        });
+        
+        window.addEventListener('resize', resize);
+        resize();
+        animate();
+    </script>
+</body>
+</html>

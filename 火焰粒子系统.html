@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>火焰粒子系统</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #0a0a0a;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+        }
+        .info {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: rgba(255,255,255,0.6);
+            font-family: Arial, sans-serif;
+            font-size: 14px;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <div class="info">移动鼠标控制火焰方向 | 点击产生爆发</div>
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        let width, height;
+        let particles = [];
+        let sparks = [];
+        let mouseX, mouseY;
+        let isClicking = false;
+        let fireIntensity = 1;
+        
+        function resize() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+            mouseX = width / 2;
+            mouseY = height * 0.8;
+        }
+        
+        class FireParticle {
+            constructor(burst = false) {
+                this.reset(burst);
+            }
+            
+            reset(burst = false) {
+                const spread = burst ? 200 : 80;
+                this.x = mouseX + (Math.random() - 0.5) * spread;
+                this.y = mouseY + (Math.random() - 0.5) * 20;
+                this.vx = (Math.random() - 0.5) * (burst ? 8 : 2);
+                this.vy = -(Math.random() * 3 + 2) * (burst ? 2 : 1);
+                this.life = 1;
+                this.decay = Math.random() * 0.015 + 0.008;
+                this.size = Math.random() * 30 + 20;
+                this.maxSize = this.size;
+                this.hue = Math.random() * 40 + 10;
+                this.burst = burst;
+            }
+            
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.vy -= 0.05;
+                this.vx *= 0.98;
+                this.life -= this.decay;
+                this.size = this.maxSize * this.life;
+                
+                // 颜色变化：黄->橙->红->灰
+                if (this.life > 0.7) {
+                    this.hue = 50 + Math.random() * 10;
+                } else if (this.life > 0.4) {
+                    this.hue = 30 + Math.random() * 20;
+                } else if (this.life > 0.2) {
+                    this.hue = 10 + Math.random() * 15;
+                } else {
+                    this.hue = 0;
+                }
+                
+                if (this.life <= 0) {
+                    this.reset();
+                }
+            }
+            
+            draw() {
+                const alpha = this.life * 0.8;
+                const lightness = this.life > 0.5 ? 60 : 30 + this.life * 40;
+                
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                const gradient = ctx.createRadialGradient(
+                    this.x, this.y, 0,
+                    this.x, this.y, this.size
+                );
+                gradient.addColorStop(0, `hsla(${this.hue}, 100%, ${lightness}%, ${alpha})`);
+                gradient.addColorStop(0.4, `hsla(${this.hue}, 100%, 50%, ${alpha * 0.6})`);
+                gradient.addColorStop(1, `hsla(${this.hue}, 100%, 30%, 0)`);
+                ctx.fillStyle = gradient;
+                ctx.fill();
+            }
+        }
+        
+        class Spark {
+            constructor() {
+                this.reset();
+            }
+            
+            reset() {
+                this.x = mouseX + (Math.random() - 0.5) * 60;
+                this.y = mouseY - Math.random() * 50;
+                this.vx = (Math.random() - 0.5) * 4;
+                this.vy = -(Math.random() * 5 + 3);
+                this.life = 1;
+                this.decay = Math.random() * 0.02 + 0.01;
+                this.size = Math.random() * 3 + 1;
+            }
+            
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.vy += 0.1;
+                this.life -= this.decay;
+                
+                if (this.life <= 0) {
+                    this.reset();
+                }
+            }
+            
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(255, 200, 100, ${this.life})`;
+                ctx.fill();
+            }
+        }
+        
+        function init() {
+            resize();
+            particles = [];
+            sparks = [];
+            
+            for (let i = 0; i < 150; i++) {
+                particles.push(new FireParticle());
+            }
+            for (let i = 0; i < 30; i++) {
+                sparks.push(new Spark());
+            }
+        }
+        
+        function animate() {
+            // 使用半透明黑色创建拖尾效果
+            ctx.fillStyle = 'rgba(10, 10, 10, 0.15)';
+            ctx.fillRect(0, 0, width, height);
+            
+            // 添加发光效果
+            ctx.globalCompositeOperation = 'screen';
+            
+            // 绘制火焰粒子
+            particles.forEach(p => {
+                p.update();
+                p.draw();
+            });
+            
+            // 绘制火星
+            sparks.forEach(s => {
+                s.update();
+                s.draw();
+            });
+            
+            ctx.globalCompositeOperation = 'source-over';
+            
+            // 添加热浪扭曲效果
+            if (Math.random() < 0.3) {
+                ctx.fillStyle = 'rgba(255, 100, 50, 0.02)';
+                ctx.fillRect(0, 0, width, height);
+            }
+            
+            requestAnimationFrame(animate);
+        }
+        
+        window.addEventListener('resize', resize);
+        
+        window.addEventListener('mousemove', (e) => {
+            mouseX = e.clientX;
+            mouseY = e.clientY;
+        });
+        
+        window.addEventListener('mousedown', () => {
+            isClicking = true;
+            // 产生爆发效果
+            for (let i = 0; i < 50; i++) {
+                particles.push(new FireParticle(true));
+            }
+        });
+        
+        window.addEventListener('mouseup', () => {
+            isClicking = false;
+        });
+        
+        window.addEventListener('touchmove', (e) => {
+            mouseX = e.touches[0].clientX;
+            mouseY = e.touches[0].clientY;
+        });
+        
+        window.addEventListener('touchstart', (e) => {
+            mouseX = e.touches[0].clientX;
+            mouseY = e.touches[0].clientY;
+            isClicking = true;
+            for (let i = 0; i < 50; i++) {
+                particles.push(new FireParticle(true));
+            }
+        });
+        
+        window.addEventListener('touchend', () => {
+            isClicking = false;
+        });
+        
+        init();
+        animate();
+    </script>
+</body>
+</html>

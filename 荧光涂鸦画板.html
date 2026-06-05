@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>荧光涂鸦画板</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            overflow: hidden;
+            background: #0a0a0a;
+            font-family: 'Microsoft YaHei', sans-serif;
+        }
+        canvas { display: block; cursor: crosshair; }
+        .controls {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            z-index: 10;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .controls button {
+            padding: 8px 16px;
+            border: 1px solid #333;
+            background: rgba(0,0,0,0.8);
+            color: #fff;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .controls button:hover { border-color: #00ff88; }
+        .color-picker {
+            display: flex;
+            gap: 5px;
+        }
+        .color-btn {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            border: 2px solid transparent;
+            cursor: pointer;
+        }
+        .color-btn.active { border-color: #fff; }
+        .info {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            color: rgba(255,255,255,0.5);
+            font-size: 14px;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="controls">
+        <button onclick="clearCanvas()">清空</button>
+        <button onclick="toggleEraser()">橡皮擦</button>
+        <button onclick="toggleRainbow()">彩虹模式</button>
+        <div class="color-picker">
+            <div class="color-btn active" style="background: #00ff88" onclick="setColor('#00ff88')"></div>
+            <div class="color-btn" style="background: #ff0088" onclick="setColor('#ff0088')"></div>
+            <div class="color-btn" style="background: #0088ff" onclick="setColor('#0088ff')"></div>
+            <div class="color-btn" style="background: #ff8800" onclick="setColor('#ff8800')"></div>
+            <div class="color-btn" style="background: #8800ff" onclick="setColor('#8800ff')"></div>
+        </div>
+    </div>
+    <div class="info">荧光画笔带辉光拖尾，夜间涂鸦效果</div>
+    <canvas id="canvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        let width, height;
+        let isDrawing = false;
+        let lastX = 0, lastY = 0;
+        let currentColor = '#00ff88';
+        let isEraser = false;
+        let brushSize = 5;
+        let isRainbow = false;
+        let rainbowHue = 0;
+        let sparkles = [];
+        
+        function resize() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+            ctx.fillStyle = '#0a0a0a';
+            ctx.fillRect(0, 0, width, height);
+        }
+        
+        class Sparkle {
+            constructor(x, y, hue) {
+                this.x = x;
+                this.y = y;
+                this.vx = (Math.random() - 0.5) * 4;
+                this.vy = (Math.random() - 0.5) * 4;
+                this.life = 1;
+                this.decay = 0.03 + Math.random() * 0.02;
+                this.size = Math.random() * 3 + 1;
+                this.hue = hue;
+            }
+
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.vx *= 0.95;
+                this.vy *= 0.95;
+                this.life -= this.decay;
+            }
+
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size * this.life, 0, Math.PI * 2);
+                ctx.fillStyle = `hsla(${this.hue}, 100%, 70%, ${this.life})`;
+                ctx.fill();
+            }
+
+            isDead() {
+                return this.life <= 0;
+            }
+        }
+
+        function drawGlowLine(x1, y1, x2, y2) {
+            const dist = Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
+            const steps = Math.max(1, dist / 2);
+
+            if (isRainbow && !isEraser) {
+                rainbowHue = (rainbowHue + 2) % 360;
+            }
+
+            for (let i = 0; i <= steps; i++) {
+                const t = i / steps;
+                const x = x1 + (x2 - x1) * t;
+                const y = y1 + (y2 - y1) * t;
+
+                if (isEraser) {
+                    ctx.globalCompositeOperation = 'destination-out';
+                    ctx.beginPath();
+                    ctx.arc(x, y, brushSize * 2, 0, Math.PI * 2);
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+                    ctx.fill();
+                    ctx.globalCompositeOperation = 'source-over';
+                } else {
+                    const color = isRainbow ? `hsl(${rainbowHue}, 100%, 60%)` : currentColor;
+
+                    ctx.shadowBlur = 20;
+                    ctx.shadowColor = color;
+                    ctx.beginPath();
+                    ctx.arc(x, y, brushSize, 0, Math.PI * 2);
+                    ctx.fillStyle = color;
+                    ctx.fill();
+                    ctx.shadowBlur = 0;
+
+                    ctx.beginPath();
+                    ctx.arc(x, y, brushSize * 0.5, 0, Math.PI * 2);
+                    ctx.fillStyle = '#fff';
+                    ctx.fill();
+
+                    if (Math.random() < 0.1) {
+                        sparkles.push(new Sparkle(x, y, isRainbow ? rainbowHue : 0));
+                    }
+                }
+            }
+        }
+
+        function animateSparkles() {
+            for (let s of sparkles) {
+                s.update();
+                s.draw();
+            }
+            sparkles = sparkles.filter(s => !s.isDead());
+            requestAnimationFrame(animateSparkles);
+        }
+        
+        canvas.addEventListener('mousedown', e => {
+            isDrawing = true;
+            lastX = e.clientX;
+            lastY = e.clientY;
+        });
+        
+        canvas.addEventListener('mousemove', e => {
+            if (!isDrawing) return;
+            drawGlowLine(lastX, lastY, e.clientX, e.clientY);
+            lastX = e.clientX;
+            lastY = e.clientY;
+        });
+        
+        canvas.addEventListener('mouseup', () => isDrawing = false);
+        canvas.addEventListener('mouseleave', () => isDrawing = false);
+        
+        canvas.addEventListener('touchstart', e => {
+            e.preventDefault();
+            isDrawing = true;
+            lastX = e.touches[0].clientX;
+            lastY = e.touches[0].clientY;
+        });
+        
+        canvas.addEventListener('touchmove', e => {
+            e.preventDefault();
+            if (!isDrawing) return;
+            const x = e.touches[0].clientX;
+            const y = e.touches[0].clientY;
+            drawGlowLine(lastX, lastY, x, y);
+            lastX = x;
+            lastY = y;
+        });
+        
+        canvas.addEventListener('touchend', () => isDrawing = false);
+        
+        function clearCanvas() {
+            ctx.fillStyle = '#0a0a0a';
+            ctx.fillRect(0, 0, width, height);
+        }
+        
+        function toggleEraser() {
+            isEraser = !isEraser;
+            isRainbow = false;
+        }
+
+        function toggleRainbow() {
+            isRainbow = !isRainbow;
+            isEraser = false;
+        }
+
+        function setColor(color) {
+            currentColor = color;
+            isEraser = false;
+            isRainbow = false;
+            document.querySelectorAll('.color-btn').forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+        }
+
+        window.addEventListener('resize', resize);
+        resize();
+        animateSparkles();
+    </script>
+</body>
+</html>

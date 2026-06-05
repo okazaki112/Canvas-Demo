@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>碎块碰撞</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            overflow: hidden;
+            background: #0a0a0a;
+            font-family: 'Microsoft YaHei', sans-serif;
+        }
+        canvas { display: block; }
+        .info {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            color: rgba(255,255,255,0.7);
+            font-size: 14px;
+            pointer-events: none;
+            z-index: 10;
+        }
+        .info h1 { font-size: 18px; margin-bottom: 8px; color: #fff; }
+    </style>
+</head>
+<body>
+    <div class="info">
+        <h1>碎块碰撞</h1>
+        <p>点击画面炸开碎片，碎片落地碰撞反弹</p>
+    </div>
+    <canvas id="canvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        let width, height;
+        let fragments = [];
+        let imageFragments = [];
+        
+        function resize() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+            createImageFragments();
+        }
+        
+        class Fragment {
+            constructor(x, y, size, color) {
+                this.x = x;
+                this.y = y;
+                this.vx = (Math.random() - 0.5) * 15;
+                this.vy = (Math.random() - 0.5) * 15 - 5;
+                this.size = size;
+                this.color = color;
+                this.rotation = Math.random() * Math.PI * 2;
+                this.rotSpeed = (Math.random() - 0.5) * 0.2;
+                this.gravity = 0.3;
+                this.bounce = 0.6;
+                this.friction = 0.99;
+            }
+            
+            update() {
+                this.vy += this.gravity;
+                this.vx *= this.friction;
+                this.vy *= this.friction;
+                
+                this.x += this.vx;
+                this.y += this.vy;
+                this.rotation += this.rotSpeed;
+                
+                if (this.x < this.size) {
+                    this.x = this.size;
+                    this.vx *= -this.bounce;
+                }
+                if (this.x > width - this.size) {
+                    this.x = width - this.size;
+                    this.vx *= -this.bounce;
+                }
+                if (this.y < this.size) {
+                    this.y = this.size;
+                    this.vy *= -this.bounce;
+                }
+                if (this.y > height - this.size) {
+                    this.y = height - this.size;
+                    this.vy *= -this.bounce;
+                    this.vx *= 0.9;
+                }
+            }
+            
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.rotation);
+                ctx.fillStyle = this.color;
+                ctx.fillRect(-this.size / 2, -this.size / 2, this.size, this.size);
+                ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+                ctx.lineWidth = 0.5;
+                ctx.strokeRect(-this.size / 2, -this.size / 2, this.size, this.size);
+                ctx.restore();
+            }
+        }
+        
+        function createImageFragments() {
+            imageFragments = [];
+            const cols = 12;
+            const rows = 8;
+            const fragWidth = width / cols;
+            const fragHeight = height / rows;
+            
+            for (let y = 0; y < rows; y++) {
+                for (let x = 0; x < cols; x++) {
+                    const hue = (x / cols * 60 + y / rows * 60 + 200) % 360;
+                    const lightness = 30 + (x + y) / (cols + rows) * 30;
+                    imageFragments.push({
+                        x: x * fragWidth + fragWidth / 2,
+                        y: y * fragHeight + fragHeight / 2,
+                        width: fragWidth,
+                        height: fragHeight,
+                        color: `hsl(${hue}, 70%, ${lightness}%)`,
+                        originX: x * fragWidth + fragWidth / 2,
+                        originY: y * fragHeight + fragHeight / 2
+                    });
+                }
+            }
+        }
+        
+        function explode(x, y) {
+            for (let f of imageFragments) {
+                const frag = new Fragment(f.x, f.y, Math.min(f.width, f.height) * 0.8, f.color);
+                const dx = f.x - x;
+                const dy = f.y - y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                const force = Math.max(0, 200 - dist) / 200;
+                frag.vx += (dx / dist || 0) * force * 20;
+                frag.vy += (dy / dist || 0) * force * 20;
+                fragments.push(frag);
+            }
+            imageFragments = [];
+        }
+        
+        function reset() {
+            fragments = [];
+            createImageFragments();
+        }
+        
+        function animate() {
+            ctx.fillStyle = 'rgba(10, 10, 10, 0.3)';
+            ctx.fillRect(0, 0, width, height);
+            
+            for (let f of imageFragments) {
+                ctx.fillStyle = f.color;
+                ctx.fillRect(
+                    f.x - f.width / 2,
+                    f.y - f.height / 2,
+                    f.width - 1,
+                    f.height - 1
+                );
+                ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(
+                    f.x - f.width / 2,
+                    f.y - f.height / 2,
+                    f.width - 1,
+                    f.height - 1
+                );
+            }
+            
+            for (let f of fragments) {
+                f.update();
+                f.draw();
+            }
+            
+            requestAnimationFrame(animate);
+        }
+        
+        canvas.addEventListener('click', e => {
+            if (imageFragments.length > 0) {
+                explode(e.clientX, e.clientY);
+            } else {
+                reset();
+            }
+        });
+        
+        canvas.addEventListener('touchstart', e => {
+            e.preventDefault();
+            if (imageFragments.length > 0) {
+                explode(e.touches[0].clientX, e.touches[0].clientY);
+            } else {
+                reset();
+            }
+        });
+        
+        window.addEventListener('resize', resize);
+        resize();
+        animate();
+    </script>
+</body>
+</html>

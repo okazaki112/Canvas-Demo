@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>水墨晕染画板</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            overflow: hidden;
+            background: #f5f0e8;
+            font-family: 'Microsoft YaHei', sans-serif;
+        }
+        canvas { display: block; cursor: crosshair; }
+        .controls {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            z-index: 10;
+            display: flex;
+            gap: 10px;
+        }
+        .controls button {
+            padding: 8px 16px;
+            border: 1px solid #999;
+            background: rgba(255,255,255,0.9);
+            color: #333;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .controls button:hover { background: #eee; }
+        .info {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            color: rgba(0,0,0,0.5);
+            font-size: 14px;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="controls">
+        <button onclick="clearCanvas()">清空画板</button>
+        <button onclick="saveImage()">保存作品</button>
+        <button onclick="autoCreate()">自动创作</button>
+    </div>
+    <div class="info">鼠标落笔，模拟墨滴入水效果</div>
+    <canvas id="canvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        let width, height;
+        let inkDrops = [];
+        let isDrawing = false;
+        let lastX = 0, lastY = 0;
+        let isAutoCreating = false;
+        let autoCreateFrame = 0;
+        
+        function resize() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+            ctx.fillStyle = '#f5f0e8';
+            ctx.fillRect(0, 0, width, height);
+        }
+        
+        class InkDrop {
+            constructor(x, y, size, intensity) {
+                this.x = x;
+                this.y = y;
+                this.size = size;
+                this.maxSize = size * (3 + Math.random() * 4);
+                this.growth = 0.3 + Math.random() * 0.5;
+                this.intensity = intensity;
+                this.life = 1;
+                this.decay = 0.003 + Math.random() * 0.005;
+                this.branches = [];
+                const branchCount = Math.floor(Math.random() * 4) + 2;
+                for (let i = 0; i < branchCount; i++) {
+                    this.branches.push({
+                        angle: Math.random() * Math.PI * 2,
+                        length: 0,
+                        maxLength: Math.random() * 30 + 10,
+                        width: Math.random() * 2 + 0.5
+                    });
+                }
+            }
+            
+            update() {
+                if (this.size < this.maxSize) {
+                    this.size += this.growth;
+                    this.growth *= 0.98;
+                }
+                
+                for (let b of this.branches) {
+                    if (b.length < b.maxLength) {
+                        b.length += 0.5;
+                    }
+                }
+                
+                this.life -= this.decay;
+            }
+            
+            draw() {
+                const alpha = this.life * this.intensity;
+                
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                const gradient = ctx.createRadialGradient(
+                    this.x, this.y, 0,
+                    this.x, this.y, this.size
+                );
+                gradient.addColorStop(0, `rgba(30, 30, 30, ${alpha * 0.8})`);
+                gradient.addColorStop(0.5, `rgba(60, 60, 60, ${alpha * 0.4})`);
+                gradient.addColorStop(1, `rgba(100, 100, 100, 0)`);
+                ctx.fillStyle = gradient;
+                ctx.fill();
+                
+                for (let b of this.branches) {
+                    const endX = this.x + Math.cos(b.angle) * b.length;
+                    const endY = this.y + Math.sin(b.angle) * b.length;
+                    ctx.beginPath();
+                    ctx.moveTo(this.x, this.y);
+                    ctx.lineTo(endX, endY);
+                    ctx.strokeStyle = `rgba(40, 40, 40, ${alpha * 0.3})`;
+                    ctx.lineWidth = b.width;
+                    ctx.lineCap = 'round';
+                    ctx.stroke();
+                }
+            }
+            
+            isDead() {
+                return this.life <= 0;
+            }
+        }
+        
+        function animate() {
+            ctx.fillStyle = 'rgba(245, 240, 232, 0.05)';
+            ctx.fillRect(0, 0, width, height);
+
+            for (let drop of inkDrops) {
+                drop.update();
+                drop.draw();
+            }
+
+            inkDrops = inkDrops.filter(d => !d.isDead());
+
+            if (isAutoCreating) {
+                autoCreateFrame++;
+                performAutoCreate();
+            }
+
+            requestAnimationFrame(animate);
+        }
+        
+        function addInk(x, y, pressure) {
+            const size = Math.random() * 8 + 3;
+            const intensity = 0.3 + pressure * 0.7;
+            inkDrops.push(new InkDrop(x, y, size, intensity));
+            
+            if (Math.random() < 0.3) {
+                const offsetX = (Math.random() - 0.5) * 20;
+                const offsetY = (Math.random() - 0.5) * 20;
+                inkDrops.push(new InkDrop(x + offsetX, y + offsetY, size * 0.5, intensity * 0.5));
+            }
+        }
+        
+        canvas.addEventListener('mousedown', e => {
+            isDrawing = true;
+            lastX = e.clientX;
+            lastY = e.clientY;
+            addInk(e.clientX, e.clientY, 1);
+        });
+        
+        canvas.addEventListener('mousemove', e => {
+            if (!isDrawing) return;
+            const dist = Math.sqrt((e.clientX - lastX) ** 2 + (e.clientY - lastY) ** 2);
+            if (dist > 5) {
+                addInk(e.clientX, e.clientY, 0.5);
+                lastX = e.clientX;
+                lastY = e.clientY;
+            }
+        });
+        
+        canvas.addEventListener('mouseup', () => isDrawing = false);
+        canvas.addEventListener('mouseleave', () => isDrawing = false);
+        
+        canvas.addEventListener('touchstart', e => {
+            e.preventDefault();
+            isDrawing = true;
+            lastX = e.touches[0].clientX;
+            lastY = e.touches[0].clientY;
+            addInk(lastX, lastY, 1);
+        });
+        
+        canvas.addEventListener('touchmove', e => {
+            e.preventDefault();
+            if (!isDrawing) return;
+            const x = e.touches[0].clientX;
+            const y = e.touches[0].clientY;
+            const dist = Math.sqrt((x - lastX) ** 2 + (y - lastY) ** 2);
+            if (dist > 5) {
+                addInk(x, y, 0.5);
+                lastX = x;
+                lastY = y;
+            }
+        });
+        
+        canvas.addEventListener('touchend', () => isDrawing = false);
+        
+        function clearCanvas() {
+            ctx.fillStyle = '#f5f0e8';
+            ctx.fillRect(0, 0, width, height);
+            inkDrops = [];
+        }
+        
+        function saveImage() {
+            const link = document.createElement('a');
+            link.download = '水墨画.png';
+            link.href = canvas.toDataURL();
+            link.click();
+        }
+
+        const artStyles = [
+            { name: '山水', generator: generateLandscape },
+            { name: '梅花', generator: generatePlumBlossom },
+            { name: '竹影', generator: generateBamboo },
+            { name: '抽象', generator: generateAbstract }
+        ];
+        let currentStyleIndex = 0;
+
+        function autoCreate() {
+            if (isAutoCreating) return;
+            clearCanvas();
+            isAutoCreating = true;
+            autoCreateFrame = 0;
+            currentStyleIndex = Math.floor(Math.random() * artStyles.length);
+        }
+
+        function performAutoCreate() {
+            const style = artStyles[currentStyleIndex];
+            style.generator();
+
+            if (autoCreateFrame > 600) {
+                isAutoCreating = false;
+                autoCreateFrame = 0;
+            }
+        }
+
+        function generateLandscape() {
+            const cx = width / 2;
+            const cy = height / 2;
+
+            if (autoCreateFrame % 3 === 0) {
+                const t = autoCreateFrame / 600;
+                const x = cx + Math.sin(t * Math.PI * 4) * (width * 0.3);
+                const y = cy + Math.cos(t * Math.PI * 2) * (height * 0.2);
+                addInk(x, y, 0.6);
+            }
+
+            if (autoCreateFrame % 5 === 0) {
+                const mountainY = height * 0.6 + Math.sin(autoCreateFrame * 0.01) * 30;
+                for (let i = 0; i < 3; i++) {
+                    const x = (autoCreateFrame * 2 + i * 100) % width;
+                    const y = mountainY + Math.sin(x * 0.01) * 50;
+                    addInk(x, y, 0.4);
+                }
+            }
+
+            if (autoCreateFrame % 8 === 0) {
+                const sunX = cx + Math.cos(autoCreateFrame * 0.005) * (width * 0.25);
+                const sunY = height * 0.25 + Math.sin(autoCreateFrame * 0.003) * 20;
+                addInk(sunX, sunY, 0.3);
+            }
+        }
+
+        function generatePlumBlossom() {
+            const cx = width / 2;
+            const cy = height / 2;
+
+            if (autoCreateFrame % 4 === 0) {
+                const branchCount = 5;
+                for (let i = 0; i < branchCount; i++) {
+                    const angle = (i / branchCount) * Math.PI * 2 + autoCreateFrame * 0.002;
+                    const len = (autoCreateFrame % 200) * 1.5;
+                    const x = cx + Math.cos(angle) * len;
+                    const y = cy + Math.sin(angle) * len * 0.8;
+                    if (len > 50) addInk(x, y, 0.5);
+                }
+            }
+
+            if (autoCreateFrame % 6 === 0) {
+                for (let i = 0; i < 3; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const dist = 80 + Math.random() * 150;
+                    const x = cx + Math.cos(angle) * dist;
+                    const y = cy + Math.sin(angle) * dist * 0.8;
+                    addInk(x, y, 0.7);
+                }
+            }
+        }
+
+        function generateBamboo() {
+            const colCount = 7;
+            const colWidth = width / colCount;
+
+            for (let col = 0; col < colCount; col++) {
+                const x = col * colWidth + colWidth / 2;
+                const progress = (autoCreateFrame + col * 30) % 400;
+                const y = height - progress * 1.5;
+
+                if (y > 0 && autoCreateFrame % 2 === 0) {
+                    addInk(x + Math.sin(progress * 0.05) * 5, y, 0.6);
+                }
+
+                if (progress > 100 && progress % 60 < 10 && autoCreateFrame % 3 === 0) {
+                    const leafY = y + 50;
+                    const leafX = x + (Math.random() - 0.5) * 40;
+                    addInk(leafX, leafY, 0.4);
+                }
+            }
+        }
+
+        function generateAbstract() {
+            const cx = width / 2;
+            const cy = height / 2;
+
+            if (autoCreateFrame % 2 === 0) {
+                const t = autoCreateFrame * 0.01;
+                const spiralCount = 3;
+
+                for (let i = 0; i < spiralCount; i++) {
+                    const angle = t + (i / spiralCount) * Math.PI * 2;
+                    const radius = (autoCreateFrame % 300) * 0.8;
+                    const x = cx + Math.cos(angle * 3) * radius;
+                    const y = cy + Math.sin(angle * 2) * radius;
+                    addInk(x, y, 0.5);
+                }
+            }
+
+            if (autoCreateFrame % 10 === 0) {
+                const waveY = cy + Math.sin(autoCreateFrame * 0.02) * (height * 0.3);
+                for (let x = 0; x < width; x += 50) {
+                    const y = waveY + Math.sin((x + autoCreateFrame) * 0.01) * 30;
+                    addInk(x, y, 0.3);
+                }
+            }
+        }
+        
+        window.addEventListener('resize', resize);
+        resize();
+        animate();
+    </script>
+</body>
+</html>
